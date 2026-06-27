@@ -3,6 +3,7 @@
 
 # ── Runtime files ─────────────────────────────────────────────────────────
 logs/
+trade_log.csv
 __pycache__/
 *.pyc
 *.pyo

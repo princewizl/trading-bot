@@ -37,8 +37,10 @@ from data.fetcher import fetch_ohlcv
 from data.indicators import add_all_indicators
 from data.session import is_session_active, active_sessions_now, minutes_to_next_session
 from data.calendar import is_news_blocked, next_news_events
+from data.trade_journal import log_trade
 from strategy.trend_following import TrendFollowingStrategy, Signal
 from notifications.alerts import send_signal_email, send_trade_result_email
+from notifications.weekly_report import should_send_weekly, send_weekly_report
 from main import filter_correlated
 
 
@@ -119,8 +121,14 @@ def run():
     if dry_run:
         logger.info("DRY RUN — no emails, no trades")
 
+    # Weekly performance report (Sundays 20:00 UTC)
+    if not dry_run and should_send_weekly():
+        logger.info("Sunday 20:00 UTC — sending weekly performance report")
+        send_weekly_report()
+
     # ── 1. Gather candidates (all filters) ───────────────────────────────
     candidates: list[Signal] = []
+    session_map: dict[str, str] = {}   # symbol → session name (for trade journal)
 
     for symbol in config.TRADING_PAIRS:
         name = config.PAIR_DISPLAY.get(symbol, symbol)
@@ -148,6 +156,7 @@ def run():
         if sig.is_actionable:
             sig.upcoming_news = next_news_events(symbol, look_ahead_hours=2)
             candidates.append(sig)
+            session_map[symbol] = session_info
             logger.info(
                 f"SIGNAL {name} {sig.direction} {sig.confidence_label} "
                 f"{sig.strength:.0%} | ADX={sig.adx:.1f} RSI={sig.rsi:.1f} "
@@ -187,12 +196,13 @@ def run():
             currency = result["currency"]
 
             logger.info(
-                f"{'✅' if outcome == 'WIN' else '❌'} {outcome}: {name} {sig.direction} | "
+                f"{'WIN' if outcome == 'WIN' else 'LOSS'}: {name} {sig.direction} | "
                 f"Profit: {currency} {profit:+.2f} | Balance: {currency} {balance:.2f}"
             )
 
             if not dry_run:
                 send_trade_result_email(sig, result, amount)
+                log_trade(sig, result, amount, session=session_map.get(sig.symbol, ""))
 
         elif deriv_is_configured() and not dry_run:
             logger.warning(f"Could not get result for {name} — check Deriv dashboard")
