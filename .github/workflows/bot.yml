@@ -1,0 +1,70 @@
+name: Trading Bot Signal Scan
+
+on:
+  # Run every 5 minutes — GitHub's minimum cron interval
+  schedule:
+    - cron: '*/5 * * * *'
+
+  # Adds a "Run workflow" button in the GitHub Actions tab for manual testing
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (scan but do NOT send emails)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+
+jobs:
+  scan:
+    name: Run Signal Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 4    # kill if stuck — never run into the next 5-min slot
+
+    steps:
+      # ── 1. Checkout code ──────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Python with pip cache ───────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'             # caches ~/.cache/pip between runs (faster startup)
+
+      # ── 3. Install dependencies ───────────────────────────────────────
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ── 4. Run scan ───────────────────────────────────────────────────
+      - name: Run signal scan
+        env:
+          # Email credentials
+          EMAIL_SENDER:    ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD:  ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+
+          # OANDA real-time data (optional — falls back to yfinance if absent)
+          OANDA_API_KEY:    ${{ secrets.OANDA_API_KEY }}
+          OANDA_ACCOUNT_ID: ${{ secrets.OANDA_ACCOUNT_ID }}
+
+          # Account size (used for suggested trade size in emails)
+          ACCOUNT_BALANCE: ${{ secrets.ACCOUNT_BALANCE }}
+
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            python run_scan.py --dry-run
+          else
+            python run_scan.py
+          fi
+
+      # ── 5. Upload logs as artifact (visible in Actions tab) ───────────
+      - name: Upload scan log
+        if: always()    # upload even if scan fails, so you can debug
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-log-${{ github.run_number }}
+          path: logs/
+          retention-days: 7
+          if-no-files-found: ignore
