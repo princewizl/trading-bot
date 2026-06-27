@@ -102,6 +102,26 @@ MIN_SIGNAL_STRENGTH = 0.75  # 75% = at least 8 of 10 checks must pass
 # Minimum candles between two signals on the same pair
 SIGNAL_COOLDOWN_MINUTES = 15
 
+# ─── Deriv.com Integration ───────────────────────────────────────────────────
+# Get token: deriv.com → Account Settings → API Token → Create (Read + Trade)
+DERIV_API_TOKEN = os.getenv("DERIV_API_TOKEN", "")
+DERIV_APP_ID    = os.getenv("DERIV_APP_ID", "1089")   # use 1089 (public) or register your own
+DERIV_DEMO      = os.getenv("DERIV_DEMO", "true").lower() == "true"  # true = virtual money
+
+# yfinance symbol → Deriv instrument name
+DERIV_SYMBOLS = {
+    "EURUSD=X": "frxEURUSD",
+    "GBPUSD=X": "frxGBPUSD",
+    "USDJPY=X": "frxUSDJPY",
+    "AUDUSD=X": "frxAUDUSD",
+    "USDCAD=X": "frxUSDCAD",
+    "EURGBP=X": "frxEURGBP",
+    "GBPJPY=X": "frxGBPJPY",
+}
+
+# Deriv trade expiry in minutes (match EXPIRY_MINUTES above)
+DERIV_EXPIRY_MINUTES = EXPIRY_MINUTES
+
 # ─── Email Settings ─────────────────────────────────────────────────────────
 EMAIL_SENDER    = os.getenv("EMAIL_SENDER", "")       # your Gmail address
 EMAIL_PASSWORD  = os.getenv("EMAIL_PASSWORD", "")     # Gmail App Password (not your login password)

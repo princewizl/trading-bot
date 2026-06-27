@@ -1,26 +1,27 @@
-name: Trading Bot Signal Scan
+name: Trading Bot — Signal Scan + Auto-Trade
 
 on:
   # Triggered by cron-job.org every 5 minutes via GitHub API
-  # This is more reliable than GitHub's built-in scheduler
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Dry run — scan but do NOT send emails'
+        description: 'Dry run — scan but do NOT place trades or send emails'
         required: false
         default: 'false'
         type: choice
         options: ['false', 'true']
 
-  # Keep GitHub's own scheduler as a fallback (runs less reliably)
+  # GitHub's own scheduler as a fallback (less reliable for 5-min intervals)
   schedule:
     - cron: '*/5 * * * *'
 
 jobs:
   scan:
-    name: Signal Scan
+    name: Signal Scan + Trade
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+
+    # 10 minutes: scan (~1 min) + trade wait (5 min) + result check + email
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -43,6 +44,8 @@ jobs:
           OANDA_API_KEY:    ${{ secrets.OANDA_API_KEY }}
           OANDA_ACCOUNT_ID: ${{ secrets.OANDA_ACCOUNT_ID }}
           ACCOUNT_BALANCE:  ${{ secrets.ACCOUNT_BALANCE }}
+          DERIV_API_TOKEN:  ${{ secrets.DERIV_API_TOKEN }}
+          DERIV_DEMO:       ${{ secrets.DERIV_DEMO }}
         run: |
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
             python run_scan.py --dry-run
