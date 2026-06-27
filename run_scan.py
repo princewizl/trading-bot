@@ -14,6 +14,10 @@ import logging
 import sys
 from pathlib import Path
 
+# Enable UTF-8 output on Windows so ₦ displays correctly in terminal
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 # ── Logging to stdout so GitHub Actions captures it ──────────────────────
 Path("logs").mkdir(exist_ok=True)
 logging.basicConfig(

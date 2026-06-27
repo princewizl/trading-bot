@@ -17,6 +17,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from config import (
+    CURRENCY,
     EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECIPIENT,
     SMTP_HOST, SMTP_PORT,
     PAIR_DISPLAY, EXPIRY_MINUTES, ACCOUNT_BALANCE, TRADE_AMOUNT_PCT,
@@ -72,9 +73,9 @@ def send_daily_summary(stats: dict):
         <tr><td style="padding:8px;border:1px solid #ddd;"><b>Win Rate</b></td>
             <td style="padding:8px;border:1px solid #ddd;">{wr:.1%}</td></tr>
         <tr><td style="padding:8px;border:1px solid #ddd;"><b>Net PnL</b></td>
-            <td style="padding:8px;border:1px solid #ddd;color:{color};">${pnl:+.2f}</td></tr>
+            <td style="padding:8px;border:1px solid #ddd;color:{color};">{CURRENCY}{pnl:+.2f}</td></tr>
         <tr><td style="padding:8px;border:1px solid #ddd;"><b>Balance</b></td>
-            <td style="padding:8px;border:1px solid #ddd;">${stats.get('balance', 0):.2f}</td></tr>
+            <td style="padding:8px;border:1px solid #ddd;">{CURRENCY}{stats.get('balance', 0):.2f}</td></tr>
       </table>
     </div>"""
     _send(subject, html, f"Daily summary: {stats.get('total_trades',0)} signals, win rate {wr:.1%}")
@@ -173,7 +174,7 @@ def _build_html(signal) -> str:
       </tr>
       <tr>
         <td style="padding:10px 16px;border:1px solid #eee;font-weight:bold;background:#fafafa;">Suggested Amount</td>
-        <td style="padding:10px 16px;border:1px solid #eee;">${amount:.2f} (2% of balance)</td>
+        <td style="padding:10px 16px;border:1px solid #eee;">{CURRENCY}{amount:.2f} (2% of balance)</td>
       </tr>
       <tr>
         <td style="padding:10px 16px;border:1px solid #eee;font-weight:bold;background:#fafafa;">H1 Trend</td>
@@ -240,7 +241,7 @@ def _build_plain(signal) -> str:
         f"Price:  {signal.price:.5f}",
         f"Time:   {ts}",
         f"Confidence: {signal.confidence_label} ({signal.strength:.0%})",
-        f"Expiry: {EXPIRY_MINUTES} min   Amount: ${amount:.2f}",
+        f"Expiry: {EXPIRY_MINUTES} min   Amount: {CURRENCY}{amount:.2f}",
         f"ADX: {signal.adx:.1f}   RSI: {signal.rsi:.1f}   H1 Trend: {signal.htf_trend}",
         "",
         "PASSED:", *[f"  ✔ {c}" for c in signal.checks_passed],

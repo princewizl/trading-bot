@@ -109,8 +109,11 @@ EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT", "")    # where signals are sent
 SMTP_HOST       = "smtp.hmailplus.com"
 SMTP_PORT       = 587
 
+# ─── Currency ───────────────────────────────────────────────────────────────
+CURRENCY = "₦"   # Nigerian Naira
+
 # ─── Risk / Session Limits ───────────────────────────────────────────────────
-ACCOUNT_BALANCE      = float(os.getenv("ACCOUNT_BALANCE", "1000"))
+ACCOUNT_BALANCE      = float(os.getenv("ACCOUNT_BALANCE", "50000"))
 TRADE_AMOUNT_PCT     = 0.02    # Suggested trade size: 2% of balance
 MAX_TRADE_AMOUNT     = 50.0
 MIN_TRADE_AMOUNT     = 1.0
@@ -122,6 +125,17 @@ MAX_DAILY_SIGNALS    = 15      # Cap emails per day
 MARTINGALE_ENABLED    = False
 MARTINGALE_MULTIPLIER = 2.0
 MARTINGALE_MAX_STEPS  = 3
+
+# ─── Legacy Pocket Option settings (unused in email-only mode) ──────────────
+TRADING_MODE        = "signal"
+POCKET_OPTION_SSID  = os.getenv("PO_SSID", "")
+PO_ASSET_MAP        = {
+    "EURUSD=X": "#EURUSD_otc", "GBPUSD=X": "#GBPUSD_otc",
+    "USDJPY=X": "#USDJPY_otc", "AUDUSD=X": "#AUDUSD_otc",
+    "USDCAD=X": "#USDCAD_otc", "EURGBP=X": "#EURGBP_otc",
+    "GBPJPY=X": "#GBPJPY_otc",
+}
+TRADE_EXPIRY_SECONDS = EXPIRY_MINUTES * 60
 
 # ─── Logging ────────────────────────────────────────────────────────────────
 LOG_FILE        = "logs/bot.log"

@@ -14,7 +14,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from config import TRADING_PAIRS, TRADE_AMOUNT_PCT, MAX_TRADE_AMOUNT, MIN_TRADE_AMOUNT
+from config import CURRENCY, TRADING_PAIRS, TRADE_AMOUNT_PCT, MAX_TRADE_AMOUNT, MIN_TRADE_AMOUNT
 from data.fetcher import fetch_ohlcv
 from data.indicators import add_all_indicators
 from strategy.trend_following import TrendFollowingStrategy
@@ -118,10 +118,10 @@ def print_results(results: list[dict]):
             r["symbol"],
             r["trades"],
             f"{r['win_rate']:.1%}",
-            f"${r['net_pnl']:+.2f}",
+            f"{CURRENCY}{r['net_pnl']:+.2f}",
             f"{r['roi']:+.1%}",
             f"{r['max_drawdown']:.1%}",
-            f"${r['final_balance']:.2f}",
+            f"{CURRENCY}{r['final_balance']:.2f}",
         ))
 
     combined = [r for r in results if r.get("trades", 0) > 0]
@@ -134,7 +134,7 @@ def print_results(results: list[dict]):
             "TOTAL",
             total_trades,
             f"{total_wins/total_trades:.1%}",
-            f"${total_pnl:+.2f}",
+            f"{CURRENCY}{total_pnl:+.2f}",
             "",
             "",
             "",

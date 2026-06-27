@@ -18,6 +18,10 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Enable UTF-8 output on Windows so ₦ and other Unicode chars display correctly
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 from colorama import Fore, Style, init as colorama_init
 
 import config

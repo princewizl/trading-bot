@@ -19,7 +19,7 @@ Use auto mode only on a demo account until you have verified results.
 
 import logging
 import time
-from config import TRADING_MODE, POCKET_OPTION_SSID, PO_ASSET_MAP, TRADE_EXPIRY_SECONDS
+from config import CURRENCY, TRADING_MODE, POCKET_OPTION_SSID, PO_ASSET_MAP, TRADE_EXPIRY_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ class PocketOptionExecutor:
         try:
             status, trade_id = self.api.buy(amount, asset, action, TRADE_EXPIRY_SECONDS)
             if status:
-                logger.info(f"TRADE PLACED  {direction} {asset}  ${amount:.2f}  [{TRADE_EXPIRY_SECONDS}s]  ID:{trade_id}")
+                logger.info(f"TRADE PLACED  {direction} {asset}  {CURRENCY}{amount:.2f}  [{TRADE_EXPIRY_SECONDS}s]  ID:{trade_id}")
                 return True
             else:
                 logger.error(f"Trade rejected by platform: {trade_id}")
@@ -132,7 +132,7 @@ class PocketOptionExecutor:
             f"  MANUAL TRADE SIGNAL\n"
             f"  Asset   : {asset}\n"
             f"  Action  : {arrow}\n"
-            f"  Amount  : ${amount:.2f}\n"
+            f"  Amount  : {CURRENCY}{amount:.2f}\n"
             f"  Expiry  : {expiry_min} minute(s)\n"
             f"{'='*52}"
         )

@@ -231,7 +231,7 @@ class TrendFollowingStrategy:
 # ── Advice text ───────────────────────────────────────────────────────────
 
 def _build_advice(direction, symbol, price, atr, score, passed, failed, pattern, htf_trend, rsi, adx, macd_hist, bb_width) -> str:
-    from config import PAIR_DISPLAY, EXPIRY_MINUTES
+    from config import CURRENCY, PAIR_DISPLAY, EXPIRY_MINUTES, ACCOUNT_BALANCE, TRADE_AMOUNT_PCT, MAX_TRADE_AMOUNT, MIN_TRADE_AMOUNT
     name   = PAIR_DISPLAY.get(symbol, symbol)
     action = "CALL (↑ price will rise)" if direction == "BUY" else "PUT (↓ price will fall)"
     conf   = "HIGH" if score >= 0.90 else ("MEDIUM" if score >= 0.75 else "LOW")
@@ -240,7 +240,7 @@ def _build_advice(direction, symbol, price, atr, score, passed, failed, pattern,
         f"1. Open Pocket Option and select: {name}",
         f"2. Set direction to: {action}",
         f"3. Set expiry to: {EXPIRY_MINUTES} minute(s)",
-        f"4. Suggested trade size: 2% of your balance",
+        f"4. Suggested trade size: {CURRENCY}{max(MIN_TRADE_AMOUNT, min(MAX_TRADE_AMOUNT, ACCOUNT_BALANCE * TRADE_AMOUNT_PCT)):,.0f} (2% of your balance)",
         f"5. Wait for the current M5 candle to CLOSE before entering",
         f"6. Confirm price is still near {price:.5f} before placing the trade",
     ]
@@ -279,7 +279,7 @@ def _build_advice(direction, symbol, price, atr, score, passed, failed, pattern,
         lines += ["CAUTIONS:", *[f"• {c}" for c in cautions], ""]
     lines += [
         "RISK RULES:",
-        "• Never risk more than 2% of your balance on one trade.",
+        f"• Never risk more than 2% of your balance ({CURRENCY}{max(MIN_TRADE_AMOUNT, min(MAX_TRADE_AMOUNT, ACCOUNT_BALANCE * TRADE_AMOUNT_PCT)):,.0f}) on one trade.",
         "• Stop trading for the day after 3 consecutive losses.",
         "• This signal is high-probability but NOT guaranteed.",
     ]

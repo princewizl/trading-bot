@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timezone, date
 from pathlib import Path
 from config import (
+    CURRENCY,
     ACCOUNT_BALANCE,
     TRADE_AMOUNT_PCT,
     MAX_TRADE_AMOUNT,
@@ -75,7 +76,7 @@ class RiskManager:
         self.consecutive_losses = 0
         self.martingale_step = 0
         self._record(symbol, "WIN", amount, profit)
-        logger.info(f"WIN  {symbol}  +${profit:.2f}  |  Balance: ${self.balance:.2f}")
+        logger.info(f"WIN  {symbol}  +{CURRENCY}{profit:.2f}  |  Balance: {CURRENCY}{self.balance:.2f}")
 
     def record_loss(self, symbol: str, amount: float):
         self.balance -= amount
@@ -83,7 +84,7 @@ class RiskManager:
         if MARTINGALE_ENABLED:
             self.martingale_step = min(self.martingale_step + 1, MARTINGALE_MAX_STEPS)
         self._record(symbol, "LOSS", amount, -amount)
-        logger.info(f"LOSS {symbol}  -${amount:.2f}  |  Balance: ${self.balance:.2f}  |  Streak: {self.consecutive_losses}")
+        logger.info(f"LOSS {symbol}  -{CURRENCY}{amount:.2f}  |  Balance: {CURRENCY}{self.balance:.2f}  |  Streak: {self.consecutive_losses}")
 
     # ── Statistics ────────────────────────────────────────────────────────
 
