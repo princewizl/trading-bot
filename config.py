@@ -134,12 +134,12 @@ CURRENCY = "₦"   # Nigerian Naira
 
 # ─── Risk / Session Limits ───────────────────────────────────────────────────
 ACCOUNT_BALANCE      = float(os.getenv("ACCOUNT_BALANCE", "50000"))
-TRADE_AMOUNT_PCT     = 0.02    # Suggested trade size: 2% of balance
-MAX_TRADE_AMOUNT     = 50.0
-MIN_TRADE_AMOUNT     = 1.0
+TRADE_AMOUNT_PCT     = 0.02    # Stake = 2% of live Deriv balance
+MAX_TRADE_AMOUNT     = 100.0   # Hard cap: never risk more than $10 per trade
+MIN_TRADE_AMOUNT     = 1.0    # Deriv minimum stake (most forex pairs)
 MAX_CONSECUTIVE_LOSSES = 3
 MAX_DAILY_LOSS_PCT   = 0.06
-MAX_DAILY_SIGNALS    = 15      # Cap emails per day
+MAX_DAILY_SIGNALS    = 50      # Cap emails per day
 
 # ─── Martingale (keep disabled — extremely high risk) ───────────────────────
 MARTINGALE_ENABLED    = False

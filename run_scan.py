@@ -48,9 +48,14 @@ def deriv_is_configured() -> bool:
     return bool(config.DERIV_API_TOKEN)
 
 
-def get_trade_amount() -> float:
-    """2% of account balance, clamped to platform limits."""
-    return round(max(config.MIN_TRADE_AMOUNT, min(config.MAX_TRADE_AMOUNT, config.ACCOUNT_BALANCE * config.TRADE_AMOUNT_PCT)), 2)
+def get_trade_amount(live_balance: float = None) -> float:
+    """
+    2% of balance, clamped to platform limits.
+    Uses live_balance from Deriv when available (avoids currency mismatch),
+    falls back to config.ACCOUNT_BALANCE for email previews.
+    """
+    balance = live_balance if live_balance and live_balance > 0 else config.ACCOUNT_BALANCE
+    return round(max(config.MIN_TRADE_AMOUNT, min(config.MAX_TRADE_AMOUNT, balance * config.TRADE_AMOUNT_PCT)), 2)
 
 
 def place_and_await(signal: Signal, dry_run: bool) -> dict | None:
@@ -83,10 +88,12 @@ def place_and_await(signal: Signal, dry_run: bool) -> dict | None:
             logger.error("Could not connect to Deriv — skipping auto-trade")
             return None
 
-        amount = get_trade_amount()
+        # Use the live Deriv balance so stake is correct in the account's real currency
+        live_balance = client.refresh_balance()
+        amount = get_trade_amount(live_balance)
         logger.info(
             f"Placing trade: {signal.symbol} {signal.direction} "
-            f"{client.currency} {amount:.2f} "
+            f"{client.currency} {amount:.2f} (2% of {client.currency} {live_balance:.2f}) "
             f"({'DEMO' if config.DERIV_DEMO else 'LIVE'})"
         )
 
@@ -101,8 +108,10 @@ def place_and_await(signal: Signal, dry_run: bool) -> dict | None:
             logger.error("Trade placement failed")
             return None
 
-        # Wait for expiry and get result
+        # Wait for expiry and get result; attach actual stake used so callers know real amount
         result = client.wait_for_result(trade)
+        if result:
+            result["actual_stake"] = amount
         return result
 
     finally:
@@ -178,13 +187,14 @@ def run():
     # ── 3. For each signal: send alert, place trade, await result, send result ──
     for sig in kept:
         name = config.PAIR_DISPLAY.get(sig.symbol, sig.symbol)
-        amount = get_trade_amount()
+        # Preview amount for the signal email (uses config balance — actual stake confirmed after Deriv connect)
+        preview_amount = get_trade_amount()
 
         logger.info(f"Processing signal: {name} {sig.direction} {sig.confidence_label}")
 
         # Send signal email (with "trade being placed" note if auto mode)
         if not dry_run:
-            send_signal_email(sig, auto_trading=deriv_is_configured(), amount=amount)
+            send_signal_email(sig, auto_trading=deriv_is_configured(), amount=preview_amount)
 
         # Place trade and wait for result
         result = place_and_await(sig, dry_run)
@@ -200,9 +210,10 @@ def run():
                 f"Profit: {currency} {profit:+.2f} | Balance: {currency} {balance:.2f}"
             )
 
+            actual_stake = result.get("actual_stake", preview_amount)
             if not dry_run:
-                send_trade_result_email(sig, result, amount)
-                log_trade(sig, result, amount, session=session_map.get(sig.symbol, ""))
+                send_trade_result_email(sig, result, actual_stake)
+                log_trade(sig, result, actual_stake, session=session_map.get(sig.symbol, ""))
 
         elif deriv_is_configured() and not dry_run:
             logger.warning(f"Could not get result for {name} — check Deriv dashboard")
