@@ -43,6 +43,7 @@ jobs:
           EMAIL_PASSWORD:    ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_RECIPIENT:   ${{ secrets.EMAIL_RECIPIENT }}
           ACCOUNT_BALANCE:   ${{ secrets.ACCOUNT_BALANCE }}
+          TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
           IQ_EMAIL:          ${{ secrets.IQ_EMAIL }}
           IQ_PASSWORD:       ${{ secrets.IQ_PASSWORD }}
           IQ_DEMO:           ${{ secrets.IQ_DEMO }}

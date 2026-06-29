@@ -89,6 +89,10 @@ MIN_SIGNAL_STRENGTH = 0.75  # 75% = at least 8 of 10 checks must pass
 # Minimum candles between two signals on the same pair
 SIGNAL_COOLDOWN_MINUTES = 15
 
+# ─── Twelve Data (real-time forex feed, fallback when Deriv WebSocket fails) ──
+# Sign up free: https://twelvedata.com/ → Dashboard → API Keys
+TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
+
 # ─── IQ Option Integration ───────────────────────────────────────────────────
 # Sign up free: iqoption.com — demo account starts with $10,000 virtual
 # Add to .env:  IQ_EMAIL, IQ_PASSWORD, IQ_DEMO=true

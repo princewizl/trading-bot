@@ -3,7 +3,8 @@ OHLCV data fetcher.
 
 Priority order:
   1. Deriv WebSocket feed  — real-time, same prices the bot trades on, no account needed
-  2. yfinance              — free fallback, 15-30 min delay on forex
+  2. Twelve Data           — real-time REST API, free tier (800 calls/day), works in Nigeria
+  3. yfinance              — last resort, 15-30 min delay on forex
 
 OANDA removed: not available in Nigeria.
 """
@@ -13,8 +14,9 @@ import logging
 import pandas as pd
 import yfinance as yf
 
+import config
 from config import SIGNAL_INTERVAL as CANDLE_INTERVAL, SIGNAL_PERIOD as CANDLE_LOOKBACK
-from data import deriv_feed
+from data import deriv_feed, twelvedata_feed
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +26,7 @@ _yf_warned = False
 def fetch_ohlcv(symbol: str, interval: str = CANDLE_INTERVAL, period: str = CANDLE_LOOKBACK) -> pd.DataFrame | None:
     """
     Fetch OHLCV candles for a symbol.
-    Tries Deriv price feed first (real-time), falls back to yfinance.
+    Tries Deriv feed first, then Twelve Data, then yfinance.
     """
     # ── 1. Deriv real-time feed ───────────────────────────────────────────
     df = deriv_feed.fetch_ohlcv(symbol, interval=interval, period=period)
@@ -32,12 +34,22 @@ def fetch_ohlcv(symbol: str, interval: str = CANDLE_INTERVAL, period: str = CAND
         logger.debug(f"Deriv feed: {len(df)} candles for {symbol} [{interval}]")
         return _normalize(df)
 
-    logger.warning(f"Deriv feed returned no data for {symbol} — falling back to yfinance")
+    logger.warning(f"Deriv feed returned no data for {symbol} — trying Twelve Data ...")
 
-    # ── 2. yfinance fallback ──────────────────────────────────────────────
+    # ── 2. Twelve Data (real-time fallback) ───────────────────────────────
+    if config.TWELVEDATA_API_KEY:
+        df = twelvedata_feed.fetch_ohlcv(
+            symbol, interval=interval, period=period,
+            api_key=config.TWELVEDATA_API_KEY,
+        )
+        if df is not None and not df.empty:
+            return _normalize(df)
+        logger.warning(f"Twelve Data returned no data for {symbol} — falling back to yfinance")
+
+    # ── 3. yfinance (last resort) ─────────────────────────────────────────
     global _yf_warned
     if not _yf_warned:
-        logger.info("Using yfinance as fallback (15-30 min delay on forex).")
+        logger.warning("Using yfinance as last resort (15-30 min delay on forex).")
         _yf_warned = True
 
     return _yfinance_fetch(symbol, interval, period)
@@ -55,10 +67,10 @@ def get_latest_candle(symbol: str) -> dict | None:
     return {
         "symbol": symbol,
         "time":   df.index[-2],
-        "open":   round(float(row["Open"]), 5),
-        "high":   round(float(row["High"]), 5),
-        "low":    round(float(row["Low"]),  5),
-        "close":  round(float(row["Close"]), 5),
+        "open":   round(float(row["open"]), 5),
+        "high":   round(float(row["high"]), 5),
+        "low":    round(float(row["low"]),  5),
+        "close":  round(float(row["close"]), 5),
         "volume": 0,
     }
 
