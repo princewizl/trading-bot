@@ -141,18 +141,25 @@ class IQClient:
 
     # ── Result ────────────────────────────────────────────────────────────
 
-    def wait_for_result(self, trade: dict, check_interval: int = 5, max_retries: int = 12) -> dict | None:
-        """Wait for expiry then poll for WIN/LOSS."""
+    def wait_for_result(self, trade: dict, check_interval: int = 10, max_retries: int = 18) -> dict | None:
+        """Wait for expiry (with progress logs) then poll for WIN/LOSS."""
         expiry_epoch = trade["expiry_epoch"]
         wait_secs    = (expiry_epoch + 10) - time.time()
 
+        # Sleep in 10-second chunks so GitHub Actions log shows progress
         if wait_secs > 0:
-            logger.info(f"Waiting {wait_secs:.0f}s for trade {trade['trade_id']} to expire ...")
-            time.sleep(wait_secs)
+            end_time = time.time() + wait_secs
+            while time.time() < end_time:
+                remaining = int(end_time - time.time())
+                logger.info(f"Trade {trade['trade_id']} — {remaining}s until expiry ...")
+                time.sleep(min(30, max(1, remaining)))
+
+        logger.info(f"Trade {trade['trade_id']} expired — checking result ...")
 
         for attempt in range(max_retries):
             try:
-                profit = self.iq.check_win_v3(trade["trade_id"])
+                profit = self._check_win(trade["trade_id"])
+
                 if profit is not None:
                     outcome = "WIN" if float(profit) > 0 else "LOSS"
                     balance = self.refresh_balance()
@@ -173,15 +180,30 @@ class IQClient:
                     )
                     return result
 
-                logger.debug(f"Trade {trade['trade_id']} not settled yet ({attempt+1}/{max_retries})")
+                logger.info(f"Result not settled yet — attempt {attempt+1}/{max_retries}, retrying in {check_interval}s ...")
                 time.sleep(check_interval)
 
             except Exception as e:
                 logger.error(f"Result check error: {e}")
                 time.sleep(check_interval)
 
-        logger.error(f"Could not retrieve result for trade {trade['trade_id']}")
+        logger.error(f"Could not retrieve result for trade {trade['trade_id']} after {max_retries} attempts")
         return None
+
+    def _check_win(self, trade_id) -> float | None:
+        """check_win_v3 wrapped in a 15-second timeout so it never hangs."""
+        result = [None]
+
+        def _fetch():
+            try:
+                result[0] = self.iq.check_win_v3(trade_id)
+            except Exception:
+                pass
+
+        t = threading.Thread(target=_fetch, daemon=True)
+        t.start()
+        t.join(timeout=15)
+        return result[0]
 
     # ── Internal ──────────────────────────────────────────────────────────
 
