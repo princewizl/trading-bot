@@ -69,7 +69,7 @@ def place_and_await(signal: Signal, dry_run: bool) -> dict | None:
 
     iq_symbol = config.IQ_SYMBOLS.get(signal.symbol)
     if not iq_symbol:
-        logger.warning(f"No IQ Option symbol mapping for {signal.symbol}")
+        logger.info(f"{signal.symbol} not available on IQ Option — signal email only, no trade placed")
         return None
 
     from execution.iqoption import IQClient
@@ -186,9 +186,10 @@ def run():
 
         logger.info(f"Processing signal: {name} {sig.direction} {sig.confidence_label}")
 
-        # Send signal email (with "trade being placed" note if auto mode)
+        # [AUTO-TRADE] label only when IQ Option is configured AND the pair is supported
+        can_trade = iq_is_configured() and sig.symbol in config.IQ_SYMBOLS
         if not dry_run:
-            send_signal_email(sig, auto_trading=iq_is_configured(), amount=preview_amount)
+            send_signal_email(sig, auto_trading=can_trade, amount=preview_amount)
 
         # Place trade and wait for result
         result = place_and_await(sig, dry_run)

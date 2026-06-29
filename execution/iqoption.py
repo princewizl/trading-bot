@@ -184,7 +184,10 @@ class IQClient:
 
     def _buy(self, ticker: str, action: str, amount: float, duration: int):
         try:
-            return self.iq.buy(amount, ticker, action, duration)
+            status, trade_id = self.iq.buy(amount, ticker, action, duration)
+            if not status:
+                logger.warning(f"IQ buy rejected: {ticker} {action} — status={status} id={trade_id}")
+            return status, trade_id
         except Exception as e:
-            logger.debug(f"IQ buy error ({ticker}): {e}")
+            logger.warning(f"IQ buy error ({ticker}): {e}")
             return False, None

@@ -5,4 +5,4 @@ ta>=0.11.0
 colorama>=0.4.6
 requests>=2.31.0
 python-dotenv>=1.0.0
-git+https://github.com/iqoptionapi/iqoptionapi.git
+git+https://github.com/iqoptionapi/iqoptionapi.git@8a903cc094a74af1ed935a56a2d6b5a9ed3319d7

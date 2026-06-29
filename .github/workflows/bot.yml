@@ -20,8 +20,9 @@ jobs:
     name: Signal Scan + Trade
     runs-on: ubuntu-latest
 
-    # 10 minutes: scan (~1 min) + trade wait (5 min) + result check + email
-    timeout-minutes: 10
+    # 20 minutes: covers cold pip install (~4 min) + scan + 5-min trade wait + result + email
+    # After first run, pip cache cuts install to ~30s, so typical runs finish in ~8 min
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
