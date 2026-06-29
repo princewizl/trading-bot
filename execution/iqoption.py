@@ -104,16 +104,28 @@ class IQClient:
 
     # ── Trade placement ───────────────────────────────────────────────────
 
-    def place_trade(self, symbol: str, direction: str, amount: float, duration_minutes: int = 5) -> dict | None:
+    def place_trade(
+        self,
+        symbol: str,
+        direction: str,
+        amount: float,
+        duration_minutes: int = 5,
+        otc_stake_pct: float = 0.80,
+    ) -> dict | None:
         """
         Place a Higher/Lower binary option.
-        Tries the regular market first, automatically falls back to OTC.
+        Tries the regular market first; falls back to OTC at 80% stake.
+        OTC markets have lower payouts (61–75%) so we risk less on them.
         """
         action = "call" if direction == "BUY" else "put"
-        amount = round(amount, 2)
 
         for ticker in [symbol, f"{symbol}-OTC"]:
-            status, trade_id = self._buy(ticker, action, amount, duration_minutes)
+            is_otc  = ticker.endswith("-OTC")
+            # Reduce stake for OTC to compensate for lower payout
+            stake   = round(amount * (otc_stake_pct if is_otc else 1.0), 2)
+            stake   = max(stake, 1.0)   # never below IQ Option minimum
+
+            status, trade_id = self._buy(ticker, action, stake, duration_minutes)
             if status:
                 expiry_epoch = int(time.time()) + (duration_minutes * 60)
                 trade = {
@@ -122,18 +134,18 @@ class IQClient:
                     "yf_symbol":     symbol,
                     "direction":     direction,
                     "action":        action,
-                    "stake":         amount,
-                    "balance_before": self.balance,   # for fallback result detection
+                    "stake":         stake,
+                    "balance_before": self.balance,
                     "expiry_epoch":  expiry_epoch,
                     "expiry_dt":     datetime.fromtimestamp(expiry_epoch, tz=timezone.utc).isoformat(),
                     "currency":      "USD",
                     "placed_at":     datetime.now(timezone.utc).isoformat(),
-                    "otc":           ticker.endswith("-OTC"),
+                    "otc":           is_otc,
                 }
+                otc_note = f" [OTC — stake reduced to {otc_stake_pct:.0%}]" if is_otc else ""
                 logger.info(
-                    f"TRADE PLACED: {ticker} {direction} USD {amount:.2f} "
-                    f"| id={trade_id} | expires={trade['expiry_dt']}"
-                    + (" [OTC]" if trade["otc"] else "")
+                    f"TRADE PLACED: {ticker} {direction} USD {stake:.2f} "
+                    f"| id={trade_id} | expires={trade['expiry_dt']}{otc_note}"
                 )
                 return trade
 

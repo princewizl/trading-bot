@@ -192,6 +192,16 @@ class TrendFollowingStrategy:
                 continue
             if direction == "SELL" and buy_score >= score:
                 continue
+
+            # H1 hard gate — never trade against the confirmed higher-timeframe trend.
+            # NEUTRAL H1 is allowed (no clear bias). Only a confirmed opposite trend blocks.
+            if direction == "BUY" and htf_trend == "DOWN":
+                logger.info(f"BLOCK {symbol} BUY: H1 trend is DOWN — counter-trend trade blocked")
+                continue
+            if direction == "SELL" and htf_trend == "UP":
+                logger.info(f"BLOCK {symbol} SELL: H1 trend is UP — counter-trend trade blocked")
+                continue
+
             if self._on_cooldown(symbol):
                 return self._no_signal(symbol, df, "Signal cooldown active")
 

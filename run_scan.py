@@ -42,7 +42,7 @@ from data.fetcher import fetch_ohlcv
 from data.indicators import add_all_indicators
 from data.session import is_session_active, active_sessions_now, minutes_to_next_session
 from data.calendar import is_news_blocked, next_news_events
-from data.trade_journal import log_trade
+from data.trade_journal import log_trade, circuit_breaker_check
 from strategy.trend_following import TrendFollowingStrategy, Signal
 from notifications.alerts import send_signal_email, send_trade_result_email
 from notifications.weekly_report import should_send_weekly, send_weekly_report
@@ -73,6 +73,13 @@ def run():
 
     if dry_run:
         logger.info("DRY RUN — no emails, no trades")
+
+    # ── Circuit breakers (checked before any market work) ─────────────────
+    if not dry_run:
+        can_trade, cb_reason = circuit_breaker_check()
+        if not can_trade:
+            logger.warning(f"CIRCUIT BREAKER ACTIVE: {cb_reason}")
+            return
 
     if not dry_run and should_send_weekly():
         logger.info("Sunday 20:00 UTC — sending weekly performance report")
@@ -155,7 +162,15 @@ def run():
 
             # Refresh balance before each placement so amount is accurate
             if can_trade:
-                iq_client.refresh_balance()
+                current_balance = iq_client.refresh_balance()
+                # Sanity: abort remaining trades if balance dropped > 10% since scan started
+                if live_balance and current_balance < live_balance * 0.90:
+                    logger.warning(
+                        f"Balance dropped from USD {live_balance:.2f} to "
+                        f"USD {current_balance:.2f} (>{10:.0f}% drawdown this scan) — "
+                        f"halting remaining placements"
+                    )
+                    break
 
             amount = get_trade_amount(iq_client.balance if can_trade else live_balance)
 
