@@ -178,21 +178,20 @@ def run():
         logger.info(f"Scan complete — no actionable signals this cycle")
         return
 
-    # ── 3. For each signal: send alert, place trade, await result, send result ──
+    # ── 3. For each signal: place trade → email signal → await result → email result ──
     for sig in kept:
         name = config.PAIR_DISPLAY.get(sig.symbol, sig.symbol)
-        # Preview amount for the signal email (uses config balance — actual stake confirmed after Deriv connect)
         preview_amount = get_trade_amount()
 
         logger.info(f"Processing signal: {name} {sig.direction} {sig.confidence_label}")
 
-        # [AUTO-TRADE] label only when IQ Option is configured AND the pair is supported
-        can_trade = iq_is_configured() and sig.symbol in config.IQ_SYMBOLS
-        if not dry_run:
-            send_signal_email(sig, auto_trading=can_trade, amount=preview_amount)
-
-        # Place trade and wait for result
+        # Place the trade FIRST so we know whether it succeeded before emailing
         result = place_and_await(sig, dry_run)
+        trade_placed = result is not None
+
+        # Signal email: [AUTO-TRADE] banner only when trade was actually placed
+        if not dry_run:
+            send_signal_email(sig, auto_trading=trade_placed, amount=preview_amount)
 
         if result:
             outcome  = result["outcome"]
@@ -210,8 +209,8 @@ def run():
                 send_trade_result_email(sig, result, actual_stake)
                 log_trade(sig, result, actual_stake, session=session_map.get(sig.symbol, ""))
 
-        elif iq_is_configured() and not dry_run:
-            logger.warning(f"Could not get result for {name} — check IQ Option dashboard")
+        elif iq_is_configured() and sig.symbol in config.IQ_SYMBOLS and not dry_run:
+            logger.warning(f"Trade placement failed for {name} — check IQ Option availability")
 
     logger.info(f"Scan complete — {len(kept)} signal(s) processed")
 
