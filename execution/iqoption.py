@@ -143,38 +143,44 @@ class IQClient:
     # ── Result ────────────────────────────────────────────────────────────
 
     def wait_for_result(self, trade: dict, check_interval: int = 10, max_retries: int = 6) -> dict | None:
+        """Single-trade convenience: wait for expiry then check result."""
+        self._wait_until(trade["expiry_epoch"], label=str(trade["trade_id"]))
+        result = self.check_result(trade, check_interval, max_retries)
+        return result if result is not None else self._result_from_balance(trade)
+
+    def wait_for_all(self, trades: list[dict]) -> None:
+        """Wait until the last trade in the batch has expired."""
+        if not trades:
+            return
+        latest = max(t["expiry_epoch"] for t in trades)
+        ids    = ", ".join(str(t["trade_id"]) for t in trades)
+        self._wait_until(latest, label=f"{len(trades)} trade(s) [{ids}]")
+
+    def check_result(self, trade: dict, check_interval: int = 10, max_retries: int = 6) -> dict | None:
         """
-        Wait for expiry (with progress logs) then get WIN/LOSS.
-
-        Strategy:
-          1. Try check_win_v3 up to max_retries times (fast when WebSocket is healthy)
-          2. If that fails, infer result from balance change — always works since
-             IQ Option settles to the account balance immediately on expiry
+        Poll for a result without waiting — call AFTER expiry has passed.
+        Returns None if check_win_v3 is unavailable; caller handles fallback.
         """
-        expiry_epoch = trade["expiry_epoch"]
-        wait_secs    = (expiry_epoch + 10) - time.time()
-
-        # Sleep in 30-second chunks so GitHub Actions log shows progress
-        if wait_secs > 0:
-            end_time = time.time() + wait_secs
-            while time.time() < end_time:
-                remaining = int(end_time - time.time())
-                logger.info(f"Trade {trade['trade_id']} — {remaining}s until expiry ...")
-                time.sleep(min(30, max(1, remaining)))
-
         logger.info(f"Trade {trade['trade_id']} expired — checking result ...")
-
-        # ── Method 1: check_win_v3 (fast, uses WebSocket) ────────────────
         for attempt in range(max_retries):
             profit = self._check_win(trade["trade_id"])
             if profit is not None:
                 return self._build_result(trade, float(profit))
             logger.info(f"check_win_v3 not ready — attempt {attempt+1}/{max_retries} ...")
             time.sleep(check_interval)
+        logger.info(f"check_win_v3 unavailable for trade {trade['trade_id']}")
+        return None
 
-        # ── Method 2: balance comparison (always reliable) ────────────────
-        logger.info("check_win_v3 unavailable — inferring result from balance change ...")
-        return self._result_from_balance(trade)
+    def _wait_until(self, expiry_epoch: int, label: str = "") -> None:
+        """Sleep until expiry_epoch + 10s buffer, logging every 30s."""
+        wait_secs = (expiry_epoch + 10) - time.time()
+        if wait_secs <= 0:
+            return
+        end_time = time.time() + wait_secs
+        while time.time() < end_time:
+            remaining = int(end_time - time.time())
+            logger.info(f"{label} — {remaining}s until expiry ...")
+            time.sleep(min(30, max(1, remaining)))
 
     def _build_result(self, trade: dict, profit: float) -> dict:
         balance = self.refresh_balance()

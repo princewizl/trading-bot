@@ -3,9 +3,11 @@ Single-scan entry point — triggered by cron-job.org every 5 minutes.
 
 Flow:
   1. Session + news + strategy + correlation filters → signals
-  2. Connect to IQ Option ONCE for the whole scan (one login per run)
-  3. Per signal: place trade → send signal email → wait expiry → result email → log
-  4. Disconnect
+  2. Connect to IQ Option ONCE
+  3. Phase A — Place ALL trades immediately (no waiting between them)
+  4. Phase B — Wait ONCE for the last expiry (all trades expire together)
+  5. Phase C — Check results for every trade, then email + log
+  6. Disconnect
 
 If IQ_EMAIL/IQ_PASSWORD not set, or connection fails → signal-only mode.
 
@@ -16,6 +18,7 @@ Usage:
 
 import logging
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -47,7 +50,6 @@ def iq_is_configured() -> bool:
 
 
 def get_trade_amount(live_balance: float = None) -> float:
-    """2% of balance, clamped between MIN and MAX trade amounts."""
     balance = live_balance if live_balance and live_balance > 0 else config.ACCOUNT_BALANCE
     return round(max(config.MIN_TRADE_AMOUNT, min(config.MAX_TRADE_AMOUNT, balance * config.TRADE_AMOUNT_PCT)), 2)
 
@@ -64,7 +66,6 @@ def run():
     if dry_run:
         logger.info("DRY RUN — no emails, no trades")
 
-    # Weekly performance report (Sundays 20:00 UTC)
     if not dry_run and should_send_weekly():
         logger.info("Sunday 20:00 UTC — sending weekly performance report")
         send_weekly_report()
@@ -116,35 +117,31 @@ def run():
         logger.info("Scan complete — no actionable signals this cycle")
         return
 
-    # ── 3. Connect to IQ Option ONCE for all signals ──────────────────────
+    # ── 3. Connect to IQ Option ONCE ─────────────────────────────────────
     iq_client    = None
     live_balance = None
 
     if iq_is_configured() and not dry_run:
         from execution.iqoption import IQClient
-        client = IQClient(
-            email=config.IQ_EMAIL,
-            password=config.IQ_PASSWORD,
-            demo=config.IQ_DEMO,
-        )
+        client = IQClient(email=config.IQ_EMAIL, password=config.IQ_PASSWORD, demo=config.IQ_DEMO)
         if client.connect():
             iq_client    = client
             live_balance = client.balance
         else:
             logger.warning("IQ Option unavailable — emailing signals only this scan")
 
-    # ── 4. Process each signal ────────────────────────────────────────────
     try:
+        amount = get_trade_amount(live_balance)
+
+        # ── Phase A: Place ALL trades immediately ─────────────────────────
+        # Each trade is placed back-to-back (~2-5s apart) so they all expire
+        # within seconds of each other. No waiting happens here.
+        placed: list[tuple[Signal, dict]] = []   # (signal, trade_dict)
+
         for sig in kept:
-            name       = config.PAIR_DISPLAY.get(sig.symbol, sig.symbol)
-            iq_symbol  = config.IQ_SYMBOLS.get(sig.symbol)
-            can_trade  = iq_client is not None and iq_symbol is not None
-            amount     = get_trade_amount(live_balance)
-
-            logger.info(f"Processing signal: {name} {sig.direction} {sig.confidence_label}")
-
-            result       = None
-            trade_placed = False
+            name      = config.PAIR_DISPLAY.get(sig.symbol, sig.symbol)
+            iq_symbol = config.IQ_SYMBOLS.get(sig.symbol)
+            can_trade = iq_client is not None and iq_symbol is not None
 
             if can_trade:
                 logger.info(f"Placing trade: {name} {sig.direction} USD {amount:.2f}")
@@ -154,30 +151,84 @@ def run():
                     amount=amount,
                     duration_minutes=config.EXPIRY_MINUTES,
                 )
-
                 if trade:
-                    trade_placed = True
-                    # Email goes out immediately after trade is confirmed placed
+                    placed.append((sig, trade))
                     if not dry_run:
                         send_signal_email(sig, auto_trading=True, amount=amount)
+                    continue   # skip the signal-only email below
 
-                    result = iq_client.wait_for_result(trade)
-                    if result:
-                        result["actual_stake"] = amount
-
-            # No trade placed → signal-only email
-            if not dry_run and not trade_placed:
+            # Trade not placed → signal-only email
+            if not dry_run:
                 send_signal_email(sig, auto_trading=False, amount=amount)
 
-            # Result email + journal
-            if result:
-                outcome  = result["outcome"]
-                profit   = result["profit"]
-                balance  = result["balance"]
-                currency = result["currency"]
+        # ── Phase B: Wait ONCE for all trades to expire ───────────────────
+        if placed:
+            iq_client.wait_for_all([t for _, t in placed])
+
+        # ── Phase C: Check results for all placed trades ──────────────────
+        if placed:
+            # Try check_win_v3 for each trade (trade-specific, no balance ambiguity)
+            results: dict[int, dict] = {}   # trade_id → result
+            known_net = 0.0
+
+            for sig, trade in placed:
+                result = iq_client.check_result(trade)
+                if result:
+                    results[trade["trade_id"]] = result
+                    known_net += result["profit"]
+
+            # Balance inference for any trade where check_win_v3 failed
+            unknown = [(sig, trade) for sig, trade in placed if trade["trade_id"] not in results]
+
+            if len(unknown) == 1:
+                # Single unknown: total balance change minus known results = this trade
+                sig, trade = unknown[0]
+                final_balance = iq_client.refresh_balance()
+                total_net     = round(final_balance - trade["balance_before"], 2)
+                trade_net     = round(total_net - known_net, 2)
+                outcome       = "WIN" if trade_net > 0 else "LOSS"
+                logger.info(
+                    f"RESULT (inferred): {trade['symbol']} {trade['direction']} → {outcome} | "
+                    f"Net: USD {trade_net:+.2f} | Balance: USD {final_balance:.2f}"
+                )
+                results[trade["trade_id"]] = {
+                    "outcome":     outcome,
+                    "profit":      trade_net,
+                    "stake":       amount,
+                    "payout":      amount + trade_net if trade_net > 0 else 0.0,
+                    "entry_spot":  0.0,
+                    "exit_spot":   0.0,
+                    "balance":     final_balance,
+                    "currency":    "USD",
+                    "contract_id": trade["trade_id"],
+                }
+
+            elif len(unknown) > 1:
+                # Multiple unknowns: can't split balance change reliably
+                # Fall back to individual balance method per trade
+                for sig, trade in unknown:
+                    result = iq_client._result_from_balance(trade)
+                    if result:
+                        results[trade["trade_id"]] = result
+                        logger.warning(
+                            f"Balance fallback for {trade['symbol']} may be inaccurate "
+                            f"when multiple trades expire simultaneously — verify on portal"
+                        )
+
+            # Send result emails and log every confirmed result
+            for sig, trade in placed:
+                result = results.get(trade["trade_id"])
+                if not result:
+                    logger.warning(f"No result retrieved for trade {trade['trade_id']} — check IQ Option portal")
+                    continue
+
+                name    = config.PAIR_DISPLAY.get(sig.symbol, sig.symbol)
+                outcome = result["outcome"]
+                profit  = result["profit"]
+                balance = result["balance"]
                 logger.info(
                     f"{'WIN' if outcome == 'WIN' else 'LOSS'}: {name} {sig.direction} | "
-                    f"Profit: {currency} {profit:+.2f} | Balance: {currency} {balance:.2f}"
+                    f"Profit: USD {profit:+.2f} | Balance: USD {balance:.2f}"
                 )
                 if not dry_run:
                     send_trade_result_email(sig, result, amount)
