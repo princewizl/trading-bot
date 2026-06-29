@@ -48,49 +48,55 @@ class IQClient:
 
     # ── Connection ────────────────────────────────────────────────────────
 
-    _CONNECT_TIMEOUT = 30   # seconds before we give up on the WebSocket handshake
+    _CONNECT_TIMEOUT = 40   # seconds — covers constructor + WebSocket handshake + auth
 
     def connect(self) -> bool:
+        # Everything (constructor + connect + balance + open times) runs inside a
+        # timed thread so the main process is never blocked longer than _CONNECT_TIMEOUT.
+        result: list = [False, "timeout", None]   # [ok, reason, iq_instance]
+
+        def _do_all():
+            try:
+                from iqoptionapi.stable_api import IQ_Option
+                iq = IQ_Option(self.email, self.password)
+                check, reason = iq.connect()
+                result[0] = bool(check)
+                result[1] = reason
+                result[2] = iq
+            except Exception as exc:
+                result[1] = str(exc)
+
+        t = threading.Thread(target=_do_all, daemon=True)
+        t.start()
+        t.join(timeout=self._CONNECT_TIMEOUT)
+
+        if t.is_alive() or result[2] is None:
+            logger.error(
+                f"IQ Option connection timed out after {self._CONNECT_TIMEOUT}s "
+                f"— IQ Option may be blocking this server's IP"
+            )
+            return False
+
+        ok, reason, iq_instance = result
+        if not ok:
+            logger.error(f"IQ Option login failed: {reason}")
+            return False
+
+        self.iq = iq_instance
+
         try:
-            from iqoptionapi.stable_api import IQ_Option
-            self.iq = IQ_Option(self.email, self.password)
-
-            # Run connect() in a thread so we can enforce a hard timeout.
-            # The iqoptionapi WebSocket can hang indefinitely on a slow/dropped connection.
-            result: list = [None, None]
-
-            def _do_connect():
-                result[0], result[1] = self.iq.connect()
-
-            t = threading.Thread(target=_do_connect, daemon=True)
-            t.start()
-            t.join(timeout=self._CONNECT_TIMEOUT)
-
-            if t.is_alive():
-                logger.error(f"IQ Option connection timed out after {self._CONNECT_TIMEOUT}s")
-                return False
-
-            check, reason = result[0], result[1]
-            if not check:
-                logger.error(f"IQ Option login failed: {reason}")
-                return False
-
             account = "PRACTICE" if self.demo else "REAL"
             self.iq.change_balance(account)
             self.balance = self.iq.get_balance()
-
-            # Fetch and cache which binary option pairs are currently open
             self._refresh_open_times()
-
-            logger.info(
-                f"IQ Option connected ({'DEMO/PRACTICE' if self.demo else 'LIVE/REAL'}) | "
-                f"Balance: USD {self.balance:.2f}"
-            )
-            return True
-
         except Exception as e:
-            logger.error(f"IQ Option connect error: {e}")
-            return False
+            logger.warning(f"Post-connect setup error: {e}")
+
+        logger.info(
+            f"IQ Option connected ({'DEMO/PRACTICE' if self.demo else 'LIVE/REAL'}) | "
+            f"Balance: USD {self.balance:.2f}"
+        )
+        return True
 
     def disconnect(self):
         try:
@@ -111,17 +117,30 @@ class IQClient:
     # ── Asset availability ────────────────────────────────────────────────
 
     def _refresh_open_times(self):
-        """Fetch which binary option pairs IQ Option currently has open."""
-        try:
-            self._open_times = self.iq.get_all_open_time()
-            open_pairs = sorted(
-                k for k, v in self._open_times.get("binary", {}).items()
-                if v.get("open")
-            )
-            logger.info(f"IQ Option open binary pairs ({len(open_pairs)}): {open_pairs}")
-        except Exception as e:
-            logger.warning(f"Could not fetch IQ Option open times: {e}")
+        """Fetch which binary option pairs IQ Option currently has open (10s timeout)."""
+        result: list = [None]
+
+        def _fetch():
+            try:
+                result[0] = self.iq.get_all_open_time()
+            except Exception:
+                pass
+
+        t = threading.Thread(target=_fetch, daemon=True)
+        t.start()
+        t.join(timeout=10)
+
+        if result[0] is None:
+            logger.warning("get_all_open_time timed out — will try all pairs")
             self._open_times = {}
+            return
+
+        self._open_times = result[0]
+        open_pairs = sorted(
+            k for k, v in self._open_times.get("binary", {}).items()
+            if v.get("open")
+        )
+        logger.info(f"IQ Option open binary pairs ({len(open_pairs)}): {open_pairs}")
 
     def _is_open(self, ticker: str) -> bool:
         """Return True if the pair is currently open for binary options trading."""
