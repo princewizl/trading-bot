@@ -40,9 +40,10 @@ class IQClient:
         self.email    = email
         self.password = password
         self.demo     = demo
-        self.iq       = None
-        self.balance  = 0.0
-        self.currency = "USD"
+        self.iq         = None
+        self.balance    = 0.0
+        self.currency   = "USD"
+        self._open_times = {}
 
     # ── Connection ────────────────────────────────────────────────────────
 
@@ -59,6 +60,9 @@ class IQClient:
             account = "PRACTICE" if self.demo else "REAL"
             self.iq.change_balance(account)
             self.balance = self.iq.get_balance()
+
+            # Fetch and cache which binary option pairs are currently open
+            self._refresh_open_times()
 
             logger.info(
                 f"IQ Option connected ({'DEMO/PRACTICE' if self.demo else 'LIVE/REAL'}) | "
@@ -86,6 +90,28 @@ class IQClient:
             pass
         return self.balance
 
+    # ── Asset availability ────────────────────────────────────────────────
+
+    def _refresh_open_times(self):
+        """Fetch which binary option pairs IQ Option currently has open."""
+        try:
+            self._open_times = self.iq.get_all_open_time()
+            open_pairs = sorted(
+                k for k, v in self._open_times.get("binary", {}).items()
+                if v.get("open")
+            )
+            logger.info(f"IQ Option open binary pairs ({len(open_pairs)}): {open_pairs}")
+        except Exception as e:
+            logger.warning(f"Could not fetch IQ Option open times: {e}")
+            self._open_times = {}
+
+    def _is_open(self, ticker: str) -> bool:
+        """Return True if the pair is currently open for binary options trading."""
+        try:
+            return self._open_times.get("binary", {}).get(ticker, {}).get("open", False)
+        except Exception:
+            return True  # Don't block if check fails
+
     # ── Trade placement ───────────────────────────────────────────────────
 
     def place_trade(self, symbol: str, direction: str, amount: float, duration_minutes: int = 5) -> dict | None:
@@ -102,6 +128,9 @@ class IQClient:
 
         # Try regular market first, then OTC (24/7 synthetic)
         for ticker in [symbol, f"{symbol}-OTC"]:
+            if not self._is_open(ticker):
+                logger.info(f"{ticker} is not currently open for binary options — skipping")
+                continue
             status, trade_id = self._buy(ticker, action, amount, duration_minutes)
             if status:
                 expiry_epoch = int(time.time()) + (duration_minutes * 60)
