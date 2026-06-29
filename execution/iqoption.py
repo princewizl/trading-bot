@@ -18,6 +18,7 @@ IQ Option automatically provides OTC (24/7) variants of forex pairs.
 """
 
 import logging
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -47,12 +48,29 @@ class IQClient:
 
     # ── Connection ────────────────────────────────────────────────────────
 
+    _CONNECT_TIMEOUT = 30   # seconds before we give up on the WebSocket handshake
+
     def connect(self) -> bool:
         try:
             from iqoptionapi.stable_api import IQ_Option
             self.iq = IQ_Option(self.email, self.password)
-            check, reason = self.iq.connect()
 
+            # Run connect() in a thread so we can enforce a hard timeout.
+            # The iqoptionapi WebSocket can hang indefinitely on a slow/dropped connection.
+            result: list = [None, None]
+
+            def _do_connect():
+                result[0], result[1] = self.iq.connect()
+
+            t = threading.Thread(target=_do_connect, daemon=True)
+            t.start()
+            t.join(timeout=self._CONNECT_TIMEOUT)
+
+            if t.is_alive():
+                logger.error(f"IQ Option connection timed out after {self._CONNECT_TIMEOUT}s")
+                return False
+
+            check, reason = result[0], result[1]
             if not check:
                 logger.error(f"IQ Option login failed: {reason}")
                 return False
