@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 GIST_ID    = os.getenv("TRADE_LOG_GIST_ID", "")
 GIST_TOKEN = os.getenv("GIST_TOKEN", os.getenv("GITHUB_TOKEN", ""))
 GIST_FILE  = "trade_log.csv"
-LOCAL_FILE = Path("trade_log.csv")
+LOCAL_FILE = Path("logs/trade_log.csv")
 
 FIELDS = [
     "timestamp", "pair", "pair_display", "direction", "session",
@@ -164,6 +164,7 @@ def _gist_write(rows: list[dict]) -> bool:
 
 def _local_append(row: dict) -> bool:
     try:
+        LOCAL_FILE.parent.mkdir(parents=True, exist_ok=True)
         write_header = not LOCAL_FILE.exists()
         with open(LOCAL_FILE, "a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=FIELDS, extrasaction="ignore")
