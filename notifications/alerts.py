@@ -74,6 +74,31 @@ def send_startup_email():
     _send(subject, html, f"Bot started at {now}.")
 
 
+def send_daily_summary(stats: dict):
+    if not _email_configured() or not stats:
+        return
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    subject  = f"Daily Signal Summary — {date_str}"
+    wr   = stats.get("win_rate", 0)
+    pnl  = stats.get("net_pnl", 0)
+    color = "#0f9d58" if pnl >= 0 else "#d93025"
+    html = f"""
+    <div style="font-family:sans-serif;padding:20px;background:#f5f5f5;">
+      <h2 style="color:#1a73e8;">Daily Summary — {date_str}</h2>
+      <table style="border-collapse:collapse;width:300px;">
+        <tr><td style="padding:8px;border:1px solid #ddd;"><b>Trades</b></td>
+            <td style="padding:8px;border:1px solid #ddd;">{stats.get('total_trades', 0)}</td></tr>
+        <tr><td style="padding:8px;border:1px solid #ddd;"><b>Win Rate</b></td>
+            <td style="padding:8px;border:1px solid #ddd;">{wr:.1%}</td></tr>
+        <tr><td style="padding:8px;border:1px solid #ddd;"><b>Net PnL</b></td>
+            <td style="padding:8px;border:1px solid #ddd;color:{color};">USD {pnl:+.2f}</td></tr>
+        <tr><td style="padding:8px;border:1px solid #ddd;"><b>Balance</b></td>
+            <td style="padding:8px;border:1px solid #ddd;">USD {stats.get('balance', 0):.2f}</td></tr>
+      </table>
+    </div>"""
+    _send(subject, html, f"Daily: {stats.get('total_trades',0)} trades, win rate {wr:.1%}, PnL USD {pnl:+.2f}")
+
+
 # ── Signal email ──────────────────────────────────────────────────────────────
 
 def _signal_subject(signal, auto_trading: bool) -> str:
