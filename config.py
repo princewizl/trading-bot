@@ -69,23 +69,10 @@ MACD_FAST   = 12
 MACD_SLOW   = 26
 MACD_SIGNAL = 9
 
-# ─── OANDA Real-time Data ───────────────────────────────────────────────────
-# Free practice account: https://www.oanda.com/register/#/sign-up/demo
-# Get API token: My Account → Manage API Access
-OANDA_API_KEY    = os.getenv("OANDA_API_KEY", "")
-OANDA_ACCOUNT_ID = os.getenv("OANDA_ACCOUNT_ID", "")
-OANDA_ENV        = "practice"   # "practice" or "live"
-
-# Map yfinance symbols → OANDA instrument names
-OANDA_INSTRUMENTS = {
-    "EURUSD=X": "EUR_USD",
-    "GBPUSD=X": "GBP_USD",
-    "USDJPY=X": "USD_JPY",
-    "AUDUSD=X": "AUD_USD",
-    "USDCAD=X": "USD_CAD",
-    "EURGBP=X": "EUR_GBP",
-    "GBPJPY=X": "GBP_JPY",
-}
+# ─── Data Source ─────────────────────────────────────────────────────────────
+# Primary: Deriv WebSocket feed (real-time, no account needed — uses DERIV_APP_ID)
+# Fallback: yfinance (15-30 min delay)
+# OANDA removed: not available in Nigeria
 
 # ─── Correlated Pair Filter ─────────────────────────────────────────────────
 # When two pairs in the same group fire the same direction in one scan,
@@ -102,13 +89,26 @@ MIN_SIGNAL_STRENGTH = 0.75  # 75% = at least 8 of 10 checks must pass
 # Minimum candles between two signals on the same pair
 SIGNAL_COOLDOWN_MINUTES = 15
 
-# ─── Deriv.com Integration ───────────────────────────────────────────────────
-# Get token: deriv.com → Account Settings → API Token → Create (Read + Trade)
-DERIV_API_TOKEN = os.getenv("DERIV_API_TOKEN", "")
-DERIV_APP_ID    = os.getenv("DERIV_APP_ID", "1089")   # use 1089 (public) or register your own
-DERIV_DEMO      = os.getenv("DERIV_DEMO", "true").lower() == "true"  # true = virtual money
+# ─── IQ Option Integration ───────────────────────────────────────────────────
+# Sign up free: iqoption.com — demo account starts with $10,000 virtual
+# Add to .env:  IQ_EMAIL, IQ_PASSWORD, IQ_DEMO=true
+IQ_EMAIL    = os.getenv("IQ_EMAIL", "")
+IQ_PASSWORD = os.getenv("IQ_PASSWORD", "")
+IQ_DEMO     = os.getenv("IQ_DEMO", "true").lower() == "true"   # true = practice/$10k virtual
 
-# yfinance symbol → Deriv instrument name
+# yfinance symbol → IQ Option ticker
+IQ_SYMBOLS = {
+    "EURUSD=X": "EURUSD",
+    "GBPUSD=X": "GBPUSD",
+    "USDJPY=X": "USDJPY",
+    "AUDUSD=X": "AUDUSD",
+    "USDCAD=X": "USDCAD",
+    "EURGBP=X": "EURGBP",
+    "GBPJPY=X": "GBPJPY",
+}
+
+# Deriv price feed (still used for real-time OHLCV data — no account needed)
+DERIV_APP_ID = os.getenv("DERIV_APP_ID", "1089")
 DERIV_SYMBOLS = {
     "EURUSD=X": "frxEURUSD",
     "GBPUSD=X": "frxGBPUSD",
@@ -118,9 +118,6 @@ DERIV_SYMBOLS = {
     "EURGBP=X": "frxEURGBP",
     "GBPJPY=X": "frxGBPJPY",
 }
-
-# Deriv trade expiry in minutes (match EXPIRY_MINUTES above)
-DERIV_EXPIRY_MINUTES = EXPIRY_MINUTES
 
 # ─── Email Settings ─────────────────────────────────────────────────────────
 EMAIL_SENDER    = os.getenv("EMAIL_SENDER", "")       # your Gmail address

@@ -1,34 +1,44 @@
+"""
+OHLCV data fetcher.
+
+Priority order:
+  1. Deriv WebSocket feed  — real-time, same prices the bot trades on, no account needed
+  2. yfinance              — free fallback, 15-30 min delay on forex
+
+OANDA removed: not available in Nigeria.
+"""
+
 import logging
 
 import pandas as pd
 import yfinance as yf
 
 from config import SIGNAL_INTERVAL as CANDLE_INTERVAL, SIGNAL_PERIOD as CANDLE_LOOKBACK
-from data import oanda
+from data import deriv_feed
 
 logger = logging.getLogger(__name__)
 
-_oanda_warned = False   # log OANDA fallback only once
+_yf_warned = False
 
 
 def fetch_ohlcv(symbol: str, interval: str = CANDLE_INTERVAL, period: str = CANDLE_LOOKBACK) -> pd.DataFrame | None:
     """
-    Fetch OHLCV candles. Uses OANDA (real-time, no delay) when OANDA_API_KEY
-    is configured; falls back to yfinance otherwise.
+    Fetch OHLCV candles for a symbol.
+    Tries Deriv price feed first (real-time), falls back to yfinance.
     """
-    # ── Try OANDA first ───────────────────────────────────────────────────
-    if oanda.is_configured():
-        df = oanda.fetch_ohlcv(symbol, interval=interval, period=period)
-        if df is not None and not df.empty:
-            return df
-        logger.warning(f"OANDA returned no data for {symbol} — falling back to yfinance")
+    # ── 1. Deriv real-time feed ───────────────────────────────────────────
+    df = deriv_feed.fetch_ohlcv(symbol, interval=interval, period=period)
+    if df is not None and not df.empty:
+        logger.debug(f"Deriv feed: {len(df)} candles for {symbol} [{interval}]")
+        return _normalize(df)
 
-    # ── yfinance fallback ─────────────────────────────────────────────────
-    global _oanda_warned
-    if not oanda.is_configured() and not _oanda_warned:
-        logger.info("OANDA not configured — using yfinance (may have 15-30 min delay). "
-                    "Add OANDA_API_KEY to .env for real-time data.")
-        _oanda_warned = True
+    logger.warning(f"Deriv feed returned no data for {symbol} — falling back to yfinance")
+
+    # ── 2. yfinance fallback ──────────────────────────────────────────────
+    global _yf_warned
+    if not _yf_warned:
+        logger.info("Using yfinance as fallback (15-30 min delay on forex).")
+        _yf_warned = True
 
     return _yfinance_fetch(symbol, interval, period)
 
@@ -45,11 +55,11 @@ def get_latest_candle(symbol: str) -> dict | None:
     return {
         "symbol": symbol,
         "time":   df.index[-2],
-        "open":   round(row["open"],  5),
-        "high":   round(row["high"],  5),
-        "low":    round(row["low"],   5),
-        "close":  round(row["close"], 5),
-        "volume": int(row["volume"]),
+        "open":   round(float(row["Open"]), 5),
+        "high":   round(float(row["High"]), 5),
+        "low":    round(float(row["Low"]),  5),
+        "close":  round(float(row["Close"]), 5),
+        "volume": 0,
     }
 
 
@@ -63,11 +73,16 @@ def _yfinance_fetch(symbol: str, interval: str, period: str) -> pd.DataFrame | N
             logger.warning(f"yfinance: no data for {symbol}")
             return None
         df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
-        df.columns = ["open", "high", "low", "close", "volume"]
         df.index = pd.to_datetime(df.index, utc=True)
         df.dropna(inplace=True)
         logger.debug(f"yfinance: {len(df)} candles for {symbol} [{interval}]")
-        return df
+        return _normalize(df)
     except Exception as e:
         logger.error(f"yfinance error for {symbol}: {e}")
         return None
+
+
+def _normalize(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure all column names are lowercase so indicators.py finds them consistently."""
+    df.columns = [c.lower() for c in df.columns]
+    return df

@@ -3,12 +3,12 @@ Single-scan entry point — triggered by cron-job.org every 5 minutes.
 
 Full flow per run:
   1. All filters: session → news calendar → 10-confluence strategy → correlation
-  2. If signal found AND Deriv configured → place trade automatically
+  2. If signal found AND IQ_EMAIL/IQ_PASSWORD set → place trade automatically on IQ Option
   3. Wait for contract expiry (5 min)
-  4. Check WIN or LOSS from Deriv API
+  4. Check WIN or LOSS from IQ Option API
   5. Send email: signal details + trade placed + result (profit/loss + balance)
 
-If DERIV_API_TOKEN is not set → signal-only mode (email the signal, no auto-trade).
+If IQ_EMAIL/IQ_PASSWORD not set → signal-only mode (email the signal, no auto-trade).
 
 Usage:
     python run_scan.py            # live mode
@@ -44,71 +44,65 @@ from notifications.weekly_report import should_send_weekly, send_weekly_report
 from main import filter_correlated
 
 
-def deriv_is_configured() -> bool:
-    return bool(config.DERIV_API_TOKEN)
+def iq_is_configured() -> bool:
+    return bool(config.IQ_EMAIL and config.IQ_PASSWORD)
 
 
 def get_trade_amount(live_balance: float = None) -> float:
-    """
-    2% of balance, clamped to platform limits.
-    Uses live_balance from Deriv when available (avoids currency mismatch),
-    falls back to config.ACCOUNT_BALANCE for email previews.
-    """
+    """2% of balance, clamped to platform limits."""
     balance = live_balance if live_balance and live_balance > 0 else config.ACCOUNT_BALANCE
     return round(max(config.MIN_TRADE_AMOUNT, min(config.MAX_TRADE_AMOUNT, balance * config.TRADE_AMOUNT_PCT)), 2)
 
 
 def place_and_await(signal: Signal, dry_run: bool) -> dict | None:
     """
-    Connect to Deriv, place the trade, wait for expiry, return result.
-    Returns None if Deriv not configured or trade fails.
+    Connect to IQ Option, place the trade, wait for expiry, return result.
+    Returns None if IQ Option not configured or trade fails.
     """
     if dry_run:
         logger.info(f"[DRY RUN] Would place {signal.direction} on {signal.symbol}")
         return None
 
-    if not deriv_is_configured():
-        logger.info("Deriv not configured — signal-only mode")
+    if not iq_is_configured():
+        logger.info("IQ Option not configured — signal-only mode")
         return None
 
-    deriv_symbol = config.DERIV_SYMBOLS.get(signal.symbol)
-    if not deriv_symbol:
-        logger.warning(f"No Deriv symbol mapping for {signal.symbol}")
+    iq_symbol = config.IQ_SYMBOLS.get(signal.symbol)
+    if not iq_symbol:
+        logger.warning(f"No IQ Option symbol mapping for {signal.symbol}")
         return None
 
-    from execution.deriv import DerivClient
-    client = DerivClient(
-        api_token=config.DERIV_API_TOKEN,
-        app_id=config.DERIV_APP_ID,
-        demo=config.DERIV_DEMO,
+    from execution.iqoption import IQClient
+    client = IQClient(
+        email=config.IQ_EMAIL,
+        password=config.IQ_PASSWORD,
+        demo=config.IQ_DEMO,
     )
 
     try:
         if not client.connect():
-            logger.error("Could not connect to Deriv — skipping auto-trade")
+            logger.error("Could not connect to IQ Option — skipping auto-trade")
             return None
 
-        # Use the live Deriv balance so stake is correct in the account's real currency
         live_balance = client.refresh_balance()
         amount = get_trade_amount(live_balance)
         logger.info(
             f"Placing trade: {signal.symbol} {signal.direction} "
-            f"{client.currency} {amount:.2f} (2% of {client.currency} {live_balance:.2f}) "
-            f"({'DEMO' if config.DERIV_DEMO else 'LIVE'})"
+            f"USD {amount:.2f} (2% of USD {live_balance:.2f}) "
+            f"({'DEMO' if config.IQ_DEMO else 'LIVE'})"
         )
 
         trade = client.place_trade(
-            symbol=deriv_symbol,
+            symbol=iq_symbol,
             direction=signal.direction,
             amount=amount,
-            duration_minutes=config.DERIV_EXPIRY_MINUTES,
+            duration_minutes=config.EXPIRY_MINUTES,
         )
 
         if trade is None:
-            logger.error("Trade placement failed")
+            logger.error("IQ Option trade placement failed")
             return None
 
-        # Wait for expiry and get result; attach actual stake used so callers know real amount
         result = client.wait_for_result(trade)
         if result:
             result["actual_stake"] = amount
@@ -123,9 +117,9 @@ def run():
     strategy = TrendFollowingStrategy()
 
     active = active_sessions_now()
-    mode   = "DEMO" if config.DERIV_DEMO else "LIVE"
-    auto   = "AUTO-TRADE" if deriv_is_configured() else "SIGNAL-ONLY"
-    logger.info(f"Scan started | Sessions: {active or ['off-peak']} | Mode: {auto} {mode if deriv_is_configured() else ''}")
+    mode   = "DEMO" if config.IQ_DEMO else "LIVE"
+    auto   = "AUTO-TRADE" if iq_is_configured() else "SIGNAL-ONLY"
+    logger.info(f"Scan started | Sessions: {active or ['off-peak']} | Mode: {auto} {mode if iq_is_configured() else ''}")
 
     if dry_run:
         logger.info("DRY RUN — no emails, no trades")
@@ -194,7 +188,7 @@ def run():
 
         # Send signal email (with "trade being placed" note if auto mode)
         if not dry_run:
-            send_signal_email(sig, auto_trading=deriv_is_configured(), amount=preview_amount)
+            send_signal_email(sig, auto_trading=iq_is_configured(), amount=preview_amount)
 
         # Place trade and wait for result
         result = place_and_await(sig, dry_run)
@@ -215,8 +209,8 @@ def run():
                 send_trade_result_email(sig, result, actual_stake)
                 log_trade(sig, result, actual_stake, session=session_map.get(sig.symbol, ""))
 
-        elif deriv_is_configured() and not dry_run:
-            logger.warning(f"Could not get result for {name} — check Deriv dashboard")
+        elif iq_is_configured() and not dry_run:
+            logger.warning(f"Could not get result for {name} — check IQ Option dashboard")
 
     logger.info(f"Scan complete — {len(kept)} signal(s) processed")
 

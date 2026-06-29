@@ -4,6 +4,7 @@
 # ── Runtime files ─────────────────────────────────────────────────────────
 logs/
 trade_log.csv
+data/.calendar_cache.json
 __pycache__/
 *.pyc
 *.pyo

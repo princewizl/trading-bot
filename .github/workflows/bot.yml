@@ -38,16 +38,15 @@ jobs:
 
       - name: Run signal scan
         env:
-          EMAIL_SENDER:     ${{ secrets.EMAIL_SENDER }}
-          EMAIL_PASSWORD:   ${{ secrets.EMAIL_PASSWORD }}
-          EMAIL_RECIPIENT:  ${{ secrets.EMAIL_RECIPIENT }}
-          OANDA_API_KEY:    ${{ secrets.OANDA_API_KEY }}
-          OANDA_ACCOUNT_ID: ${{ secrets.OANDA_ACCOUNT_ID }}
-          ACCOUNT_BALANCE:  ${{ secrets.ACCOUNT_BALANCE }}
-          DERIV_API_TOKEN:      ${{ secrets.DERIV_API_TOKEN }}
-          DERIV_DEMO:           ${{ secrets.DERIV_DEMO }}
-          TRADE_LOG_GIST_ID:   ${{ secrets.TRADE_LOG_GIST_ID }}
-          GIST_TOKEN:          ${{ secrets.GIST_TOKEN }}
+          EMAIL_SENDER:      ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD:    ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECIPIENT:   ${{ secrets.EMAIL_RECIPIENT }}
+          ACCOUNT_BALANCE:   ${{ secrets.ACCOUNT_BALANCE }}
+          IQ_EMAIL:          ${{ secrets.IQ_EMAIL }}
+          IQ_PASSWORD:       ${{ secrets.IQ_PASSWORD }}
+          IQ_DEMO:           ${{ secrets.IQ_DEMO }}
+          TRADE_LOG_GIST_ID: ${{ secrets.TRADE_LOG_GIST_ID }}
+          GIST_TOKEN:        ${{ secrets.GIST_TOKEN }}
         run: |
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
             python run_scan.py --dry-run
