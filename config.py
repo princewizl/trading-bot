@@ -106,7 +106,7 @@ IQ_DEMO     = os.getenv("IQ_DEMO", "true").lower() == "true"   # true = practice
 IQ_SYMBOLS = {
     "EURUSD=X": "EURUSD",
     "GBPUSD=X": "GBPUSD",
-    "USDJPY=X": "USDJPY",
+    # USDJPY: not available as binary options on IQ Option — always rejected
     "USDCAD=X": "USDCAD",
     "EURGBP=X": "EURGBP",
     "GBPJPY=X": "GBPJPY",
