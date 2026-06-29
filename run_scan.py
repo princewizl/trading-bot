@@ -1,13 +1,13 @@
 """
 Single-scan entry point — triggered by cron-job.org every 5 minutes.
 
-Full flow per run:
-  1. All filters: session → news calendar → 10-confluence strategy → correlation
-  2. Connect to IQ Option ONCE (reused for all signals in this scan)
-  3. For each signal: place trade → email → wait expiry → result email → log
+Flow:
+  1. Session + news + strategy + correlation filters → signals
+  2. Connect to IQ Option ONCE for the whole scan (one login per run)
+  3. Per signal: place trade → send signal email → wait expiry → result email → log
   4. Disconnect
 
-If IQ_EMAIL/IQ_PASSWORD not set → signal-only mode (email the signal, no auto-trade).
+If IQ_EMAIL/IQ_PASSWORD not set, or connection fails → signal-only mode.
 
 Usage:
     python run_scan.py            # live mode
@@ -16,7 +16,6 @@ Usage:
 
 import logging
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -48,7 +47,7 @@ def iq_is_configured() -> bool:
 
 
 def get_trade_amount(live_balance: float = None) -> float:
-    """2% of balance, clamped to platform limits."""
+    """2% of balance, clamped between MIN and MAX trade amounts."""
     balance = live_balance if live_balance and live_balance > 0 else config.ACCOUNT_BALANCE
     return round(max(config.MIN_TRADE_AMOUNT, min(config.MAX_TRADE_AMOUNT, balance * config.TRADE_AMOUNT_PCT)), 2)
 
@@ -70,7 +69,7 @@ def run():
         logger.info("Sunday 20:00 UTC — sending weekly performance report")
         send_weekly_report()
 
-    # ── 1. Gather candidates (all filters) ───────────────────────────────
+    # ── 1. Scan all pairs ─────────────────────────────────────────────────
     candidates: list[Signal] = []
     session_map: dict[str, str] = {}
 
@@ -106,8 +105,6 @@ def run():
                 f"{sig.strength:.0%} | ADX={sig.adx:.1f} RSI={sig.rsi:.1f} "
                 f"MACD={sig.macd_hist:+.6f} BB={sig.bb_width*100:.3f}%"
             )
-        else:
-            logger.debug(f"NO SIGNAL {name}: {sig.advice}")
 
     # ── 2. Correlation filter ─────────────────────────────────────────────
     kept    = filter_correlated(candidates)
@@ -119,30 +116,30 @@ def run():
         logger.info("Scan complete — no actionable signals this cycle")
         return
 
-    # ── 3. Connect to IQ Option ONCE for all signals in this scan ────────
-    iq_client = None
+    # ── 3. Connect to IQ Option ONCE for all signals ──────────────────────
+    iq_client    = None
     live_balance = None
 
     if iq_is_configured() and not dry_run:
         from execution.iqoption import IQClient
-        iq_client = IQClient(
+        client = IQClient(
             email=config.IQ_EMAIL,
             password=config.IQ_PASSWORD,
             demo=config.IQ_DEMO,
         )
-        if iq_client.connect():
-            live_balance = iq_client.refresh_balance()
+        if client.connect():
+            iq_client    = client
+            live_balance = client.balance
         else:
-            logger.error("IQ Option connection failed — sending signal emails only this scan")
-            iq_client = None
+            logger.warning("IQ Option unavailable — emailing signals only this scan")
 
     # ── 4. Process each signal ────────────────────────────────────────────
     try:
         for sig in kept:
-            name          = config.PAIR_DISPLAY.get(sig.symbol, sig.symbol)
-            iq_symbol     = config.IQ_SYMBOLS.get(sig.symbol)
-            can_trade     = iq_client is not None and iq_symbol is not None
-            preview_amount = get_trade_amount(live_balance)
+            name       = config.PAIR_DISPLAY.get(sig.symbol, sig.symbol)
+            iq_symbol  = config.IQ_SYMBOLS.get(sig.symbol)
+            can_trade  = iq_client is not None and iq_symbol is not None
+            amount     = get_trade_amount(live_balance)
 
             logger.info(f"Processing signal: {name} {sig.direction} {sig.confidence_label}")
 
@@ -150,11 +147,7 @@ def run():
             trade_placed = False
 
             if can_trade:
-                amount = get_trade_amount(live_balance)
-                logger.info(
-                    f"Placing trade: {name} {sig.direction} "
-                    f"USD {amount:.2f} ({'DEMO' if config.IQ_DEMO else 'LIVE'})"
-                )
+                logger.info(f"Placing trade: {name} {sig.direction} USD {amount:.2f}")
                 trade = iq_client.place_trade(
                     symbol=iq_symbol,
                     direction=sig.direction,
@@ -164,35 +157,31 @@ def run():
 
                 if trade:
                     trade_placed = True
+                    # Email goes out immediately after trade is confirmed placed
                     if not dry_run:
-                        # Signal email goes out immediately after trade is placed
                         send_signal_email(sig, auto_trading=True, amount=amount)
 
                     result = iq_client.wait_for_result(trade)
                     if result:
                         result["actual_stake"] = amount
-                else:
-                    logger.warning(f"Trade placement failed for {name}")
 
-            # Signal email without [AUTO-TRADE] if no trade placed
+            # No trade placed → signal-only email
             if not dry_run and not trade_placed:
-                send_signal_email(sig, auto_trading=False, amount=preview_amount)
+                send_signal_email(sig, auto_trading=False, amount=amount)
 
+            # Result email + journal
             if result:
                 outcome  = result["outcome"]
                 profit   = result["profit"]
                 balance  = result["balance"]
                 currency = result["currency"]
-
                 logger.info(
                     f"{'WIN' if outcome == 'WIN' else 'LOSS'}: {name} {sig.direction} | "
                     f"Profit: {currency} {profit:+.2f} | Balance: {currency} {balance:.2f}"
                 )
-
-                actual_stake = result.get("actual_stake", preview_amount)
                 if not dry_run:
-                    send_trade_result_email(sig, result, actual_stake)
-                    log_trade(sig, result, actual_stake, session=session_map.get(sig.symbol, ""))
+                    send_trade_result_email(sig, result, amount)
+                    log_trade(sig, result, amount, session=session_map.get(sig.symbol, ""))
 
     finally:
         if iq_client:
