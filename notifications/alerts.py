@@ -2,14 +2,9 @@
 Email notification module.
 
 Sends:
-  1. Signal email — when a high-confidence signal is detected
-     (shows "Trade placed on Deriv" banner when auto-trading is enabled)
-  2. Trade result email — after contract expires: WIN or LOSS with PnL + balance
-  3. Startup email — bot is running confirmation
-  4. Daily summary email — end-of-day stats
-
-Setup:
-  Use EMAIL_SENDER / EMAIL_PASSWORD / EMAIL_RECIPIENT in .env
+  1. Signal email  — trade placed on IQ Option (auto_trading=True) or manual tip (auto_trading=False)
+  2. Result email  — WIN or LOSS with PnL + new balance after contract expires
+  3. Startup email — confirmation that bot is running
 """
 
 import logging
@@ -19,29 +14,33 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from config import (
-    CURRENCY,
     EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECIPIENT,
     SMTP_HOST, SMTP_PORT,
-    PAIR_DISPLAY, EXPIRY_MINUTES, ACCOUNT_BALANCE, TRADE_AMOUNT_PCT,
+    PAIR_DISPLAY, EXPIRY_MINUTES,
+    MIN_TRADE_AMOUNT, MAX_TRADE_AMOUNT, TRADE_AMOUNT_PCT,
 )
 
 logger = logging.getLogger(__name__)
 
 
-# ── Public API ────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _next_stake(balance: float) -> float:
+    """2% of balance, clamped to platform limits."""
+    return round(max(MIN_TRADE_AMOUNT, min(MAX_TRADE_AMOUNT, balance * TRADE_AMOUNT_PCT)), 2)
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
 
 def send_signal_email(signal, auto_trading: bool = False, amount: float = None) -> bool:
     """
-    Send a formatted signal email.
-    auto_trading=True adds a "Trade placed on Deriv — awaiting result" banner.
-    Returns True on success.
+    Send a signal email.
+    auto_trading=True  → trade was already placed on IQ Option; shows green banner + stake used.
+    auto_trading=False → signal only; prompts user to place manually.
     """
     if not _email_configured():
-        logger.warning("Email not configured — check EMAIL_SENDER / EMAIL_PASSWORD / EMAIL_RECIPIENT in .env")
+        logger.warning("Email not configured — check EMAIL_SENDER / EMAIL_PASSWORD / EMAIL_RECIPIENT")
         return False
-
-    if amount is None:
-        amount = max(1.0, min(50.0, ACCOUNT_BALANCE * TRADE_AMOUNT_PCT))
 
     subject = _signal_subject(signal, auto_trading)
     html    = _build_signal_html(signal, auto_trading, amount)
@@ -50,16 +49,13 @@ def send_signal_email(signal, auto_trading: bool = False, amount: float = None) 
 
 
 def send_trade_result_email(signal, result: dict, amount: float) -> bool:
-    """
-    Send a trade result email after Deriv contract settles.
-    result keys: outcome (WIN/LOSS), profit, balance, currency, entry_spot, exit_spot, stake, payout
-    """
+    """Send WIN/LOSS result email after IQ Option contract settles."""
     if not _email_configured():
         return False
 
     subject = _result_subject(signal, result)
     html    = _build_result_html(signal, result, amount)
-    plain   = _build_result_plain(signal, result)
+    plain   = _build_result_plain(signal, result, amount)
     return _send(subject, html, plain)
 
 
@@ -71,44 +67,19 @@ def send_startup_email():
     html = f"""
     <div style="font-family:sans-serif;padding:20px;background:#f5f5f5;">
       <h2 style="color:#1a73e8;">Trading Bot Started</h2>
-      <p>Your Forex signal bot is now running and scanning markets.</p>
+      <p>Your Forex signal bot is now running and scanning markets every 5 minutes.</p>
       <p><strong>Started at:</strong> {now}</p>
-      <p>You will receive an email each time a high-confidence signal is detected.</p>
+      <p>You will receive an email each time a high-confidence trade is placed on IQ Option.</p>
     </div>"""
-    _send(subject, html, f"Bot started at {now}. Scanning for high-confidence signals.")
+    _send(subject, html, f"Bot started at {now}.")
 
 
-def send_daily_summary(stats: dict):
-    if not _email_configured() or not stats:
-        return
-    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    subject  = f"Daily Signal Summary — {date_str}"
-    wr  = stats.get("win_rate", 0)
-    pnl = stats.get("net_pnl", 0)
-    color = "#0f9d58" if pnl >= 0 else "#d93025"
-    html = f"""
-    <div style="font-family:sans-serif;padding:20px;background:#f5f5f5;">
-      <h2 style="color:#1a73e8;">Daily Summary — {date_str}</h2>
-      <table style="border-collapse:collapse;width:300px;">
-        <tr><td style="padding:8px;border:1px solid #ddd;"><b>Signals Sent</b></td>
-            <td style="padding:8px;border:1px solid #ddd;">{stats.get('total_trades', 0)}</td></tr>
-        <tr><td style="padding:8px;border:1px solid #ddd;"><b>Win Rate</b></td>
-            <td style="padding:8px;border:1px solid #ddd;">{wr:.1%}</td></tr>
-        <tr><td style="padding:8px;border:1px solid #ddd;"><b>Net PnL</b></td>
-            <td style="padding:8px;border:1px solid #ddd;color:{color};">{CURRENCY}{pnl:+.2f}</td></tr>
-        <tr><td style="padding:8px;border:1px solid #ddd;"><b>Balance</b></td>
-            <td style="padding:8px;border:1px solid #ddd;">{CURRENCY}{stats.get('balance', 0):.2f}</td></tr>
-      </table>
-    </div>"""
-    _send(subject, html, f"Daily summary: {stats.get('total_trades',0)} signals, win rate {wr:.1%}")
-
-
-# ── Signal email builder ───────────────────────────────────────────────────
+# ── Signal email ──────────────────────────────────────────────────────────────
 
 def _signal_subject(signal, auto_trading: bool) -> str:
     arrow = "↑ CALL" if signal.direction == "BUY" else "↓ PUT"
     name  = PAIR_DISPLAY.get(signal.symbol, signal.symbol)
-    tag   = " [AUTO-TRADE]" if auto_trading else ""
+    tag   = " [AUTO-TRADE]" if auto_trading else " [SIGNAL]"
     return f"[{signal.confidence_label}] {arrow} — {name} @ {signal.price:.5f}{tag}"
 
 
@@ -124,7 +95,7 @@ def _build_signal_html(signal, auto_trading: bool, amount: float) -> str:
         f'<li style="color:#0f9d58;">&#10004; {c}</li>' for c in signal.checks_passed
     )
     checks_failed_html = "".join(
-        f'<li style="color:#999;">&#10008; {c}</li>' for c in signal.checks_failed
+        f'<li style="color:#bbb;">&#10008; {c}</li>' for c in signal.checks_failed
     )
 
     advice_html = signal.advice.replace("\n", "<br>")
@@ -149,21 +120,42 @@ def _build_signal_html(signal, auto_trading: bool, amount: float) -> str:
           </td>
         </tr>"""
 
-    # Auto-trade banner (shown only when Deriv auto-trading is active)
-    auto_banner = ""
-    if auto_trading:
-        auto_banner = f"""
+    # Banner — different for auto-trade vs signal-only
+    if auto_trading and amount is not None:
+        banner = f"""
   <div style="max-width:600px;margin:16px auto;background:#e8f5e9;border-radius:8px;
               border-left:5px solid #0f9d58;padding:16px 20px;">
     <p style="margin:0;font-size:15px;color:#1b5e20;">
-      <strong>&#9889; Trade Placed on Deriv Automatically</strong><br>
+      <strong>&#9889; Trade Placed on IQ Option Automatically</strong><br>
       <span style="font-size:13px;">
-        Stake: <strong>{signal.currency if hasattr(signal,'currency') else 'USD'} {amount:.2f}</strong> &nbsp;|&nbsp;
+        Stake: <strong>USD {amount:.2f}</strong> &nbsp;|&nbsp;
         Expiry: <strong>{EXPIRY_MINUTES} minute(s)</strong> &nbsp;|&nbsp;
-        You will receive a result email when the contract expires.
+        Platform: <strong>IQ Option {'DEMO' if True else 'LIVE'}</strong><br>
+        A result email will arrive when the contract expires.
       </span>
     </p>
   </div>"""
+    else:
+        banner = f"""
+  <div style="max-width:600px;margin:16px auto;background:#fff8e1;border-radius:8px;
+              border-left:5px solid #f4b400;padding:16px 20px;">
+    <p style="margin:0;font-size:15px;color:#5d4037;">
+      <strong>&#128276; Signal Alert — Place Manually</strong><br>
+      <span style="font-size:13px;">
+        This pair is not available for auto-trading right now.<br>
+        Open IQ Option and place a <strong>{dir_label}</strong> on <strong>{name}</strong>
+        with <strong>{EXPIRY_MINUTES}-minute</strong> expiry.
+      </span>
+    </p>
+  </div>"""
+
+    stake_row = ""
+    if auto_trading and amount is not None:
+        stake_row = f"""
+      <tr>
+        <td style="padding:10px 16px;border:1px solid #eee;font-weight:bold;background:#fafafa;">Stake Used</td>
+        <td style="padding:10px 16px;border:1px solid #eee;">USD {amount:.2f} (2% of balance)</td>
+      </tr>"""
 
     return f"""<!DOCTYPE html>
 <html>
@@ -179,11 +171,11 @@ def _build_signal_html(signal, auto_trading: bool, amount: float) -> str:
   <div style="text-align:center;padding:12px;background:#fff;">
     <span style="background:{conf_bg};color:#fff;padding:6px 20px;border-radius:20px;
                  font-size:14px;font-weight:bold;letter-spacing:1px;">
-      {signal.confidence_label} CONFIDENCE &#8212; {signal.strength:.0%} filters passed
+      {signal.confidence_label} CONFIDENCE &mdash; {signal.strength:.0%} filters passed
     </span>
   </div>
 
-  {auto_banner}
+  {banner}
 
   <div style="max-width:600px;margin:16px auto;background:#fff;border-radius:8px;
               box-shadow:0 2px 6px rgba(0,0,0,0.1);overflow:hidden;">
@@ -207,10 +199,7 @@ def _build_signal_html(signal, auto_trading: bool, amount: float) -> str:
         <td style="padding:10px 16px;border:1px solid #eee;font-weight:bold;background:#fafafa;">Expiry</td>
         <td style="padding:10px 16px;border:1px solid #eee;">{EXPIRY_MINUTES} minute(s)</td>
       </tr>
-      <tr>
-        <td style="padding:10px 16px;border:1px solid #eee;font-weight:bold;background:#fafafa;">Stake</td>
-        <td style="padding:10px 16px;border:1px solid #eee;">{amount:.2f} (2% of balance)</td>
-      </tr>
+      {stake_row}
       <tr>
         <td style="padding:10px 16px;border:1px solid #eee;font-weight:bold;background:#fafafa;">H1 Trend</td>
         <td style="padding:10px 16px;border:1px solid #eee;">{signal.htf_trend}</td>
@@ -231,7 +220,7 @@ def _build_signal_html(signal, auto_trading: bool, amount: float) -> str:
   <div style="max-width:600px;margin:16px auto;background:#fff;border-radius:8px;
               box-shadow:0 2px 6px rgba(0,0,0,0.1);overflow:hidden;">
     <div style="padding:16px 20px;border-bottom:1px solid #eee;">
-      <h3 style="margin:0;color:#333;">Confluence Checklist</h3>
+      <h3 style="margin:0;color:#333;">Confluence Checklist ({len(signal.checks_passed)}/{len(signal.checks_passed)+len(signal.checks_failed)} passed)</h3>
     </div>
     <div style="padding:16px 20px;">
       <ul style="margin:0;padding-left:20px;line-height:2;">
@@ -244,7 +233,7 @@ def _build_signal_html(signal, auto_trading: bool, amount: float) -> str:
   <div style="max-width:600px;margin:16px auto;background:#fff;border-radius:8px;
               box-shadow:0 2px 6px rgba(0,0,0,0.1);overflow:hidden;">
     <div style="padding:16px 20px;border-bottom:1px solid #eee;background:#1a73e8;">
-      <h3 style="margin:0;color:#fff;">How to Trade This Signal</h3>
+      <h3 style="margin:0;color:#fff;">Trade Advice</h3>
     </div>
     <div style="padding:16px 20px;font-size:14px;line-height:1.8;color:#444;">
       {advice_html}
@@ -254,9 +243,8 @@ def _build_signal_html(signal, auto_trading: bool, amount: float) -> str:
   <div style="max-width:600px;margin:16px auto 32px;padding:14px 20px;
               background:#fff3cd;border-radius:8px;border-left:4px solid #f4b400;
               font-size:12px;color:#856404;">
-    <strong>Disclaimer:</strong> This is an automated signal based on technical analysis.
-    It is NOT financial advice and does not guarantee profit. Trading involves significant
-    risk. Never invest money you cannot afford to lose.
+    <strong>Disclaimer:</strong> Automated signal based on technical analysis — not financial advice.
+    Trading involves significant risk. Never invest money you cannot afford to lose.
   </div>
 
 </body>
@@ -266,32 +254,42 @@ def _build_signal_html(signal, auto_trading: bool, amount: float) -> str:
 def _build_signal_plain(signal, auto_trading: bool, amount: float) -> str:
     name  = PAIR_DISPLAY.get(signal.symbol, signal.symbol)
     ts    = signal.timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
+    arrow = "CALL" if signal.direction == "BUY" else "PUT"
     lines = [
-        f"SIGNAL: {'CALL' if signal.direction == 'BUY' else 'PUT'}",
-        f"Asset:  {name}",
-        f"Price:  {signal.price:.5f}",
-        f"Time:   {ts}",
-        f"Confidence: {signal.confidence_label} ({signal.strength:.0%})",
-        f"Expiry: {EXPIRY_MINUTES} min   Stake: {amount:.2f} (2% of balance)",
+        f"SIGNAL: {arrow}  |  {name}  |  {signal.confidence_label} ({signal.strength:.0%})",
+        f"Price:  {signal.price:.5f}   Time: {ts}",
         f"ADX: {signal.adx:.1f}   RSI: {signal.rsi:.1f}   H1 Trend: {signal.htf_trend}",
+        f"Expiry: {EXPIRY_MINUTES} min",
+        "",
     ]
-    if auto_trading:
-        lines += ["", "*** TRADE PLACED ON DERIV AUTOMATICALLY ***", "Result email will follow after contract expires."]
-    lines += ["", "PASSED:", *[f"  + {c}" for c in signal.checks_passed],
-              "", "ADVICE:", signal.advice]
+    if auto_trading and amount is not None:
+        lines += [
+            f"*** TRADE PLACED ON IQ OPTION AUTOMATICALLY ***",
+            f"Stake: USD {amount:.2f}   Platform: IQ Option DEMO",
+            "Result email will follow when contract expires.",
+        ]
+    else:
+        lines += [
+            "*** SIGNAL ONLY — place manually on IQ Option ***",
+            f"Open a {arrow} on {name} with {EXPIRY_MINUTES}-min expiry.",
+        ]
+    lines += [
+        "",
+        "CHECKS PASSED:", *[f"  + {c}" for c in signal.checks_passed],
+        "", "ADVICE:", signal.advice,
+    ]
     return "\n".join(lines)
 
 
-# ── Trade result email builder ─────────────────────────────────────────────
+# ── Result email ──────────────────────────────────────────────────────────────
 
 def _result_subject(signal, result: dict) -> str:
     outcome  = result["outcome"]
     profit   = result["profit"]
     currency = result["currency"]
     name     = PAIR_DISPLAY.get(signal.symbol, signal.symbol)
-    emoji    = "WIN" if outcome == "WIN" else "LOSS"
     sign     = "+" if profit >= 0 else ""
-    return f"[TRADE {emoji}] {name} {signal.direction} | {currency} {sign}{profit:.2f}"
+    return f"[{'WIN ✅' if outcome == 'WIN' else 'LOSS ❌'}] {name} {signal.direction} | {currency} {sign}{profit:.2f}"
 
 
 def _build_result_html(signal, result: dict, stake: float) -> str:
@@ -309,9 +307,10 @@ def _build_result_html(signal, result: dict, stake: float) -> str:
     is_win  = outcome == "WIN"
 
     bg_color    = "#0f9d58" if is_win else "#d93025"
-    result_icon = "&#9989;" if is_win else "&#10060;"  # ✅ or ❌
+    result_icon = "&#9989;" if is_win else "&#10060;"
     profit_sign = "+" if profit >= 0 else ""
     dir_label   = "CALL ↑" if signal.direction == "BUY" else "PUT ↓"
+    next_stake  = _next_stake(balance)
 
     price_move = ""
     if exit_spot and entry:
@@ -331,7 +330,6 @@ def _build_result_html(signal, result: dict, stake: float) -> str:
 <head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#f0f0f0;font-family:Arial,sans-serif;">
 
-  <!-- RESULT HEADER -->
   <div style="background:{bg_color};padding:28px 20px;text-align:center;">
     <div style="font-size:48px;">{result_icon}</div>
     <h1 style="color:#fff;margin:8px 0 0;font-size:36px;">TRADE {outcome}</h1>
@@ -339,18 +337,18 @@ def _build_result_html(signal, result: dict, stake: float) -> str:
     <p style="color:rgba(255,255,255,0.85);margin:4px 0 0;">{ts}</p>
   </div>
 
-  <!-- PnL SUMMARY BANNER -->
+  <!-- PnL SUMMARY -->
   <div style="max-width:600px;margin:16px auto;background:#fff;border-radius:8px;
-              box-shadow:0 2px 6px rgba(0,0,0,0.1);padding:20px;text-align:center;">
-    <div style="display:inline-block;margin:0 20px;">
+              box-shadow:0 2px 6px rgba(0,0,0,0.1);padding:24px;text-align:center;">
+    <div style="display:inline-block;margin:0 24px;">
       <div style="font-size:13px;color:#666;margin-bottom:4px;">Profit / Loss</div>
-      <div style="font-size:32px;font-weight:bold;color:{bg_color};">
+      <div style="font-size:36px;font-weight:bold;color:{bg_color};">
         {currency} {profit_sign}{profit:.2f}
       </div>
     </div>
-    <div style="display:inline-block;margin:0 20px;border-left:2px solid #eee;padding-left:24px;">
+    <div style="display:inline-block;margin:0 24px;border-left:2px solid #eee;padding-left:28px;">
       <div style="font-size:13px;color:#666;margin-bottom:4px;">New Balance</div>
-      <div style="font-size:32px;font-weight:bold;color:#333;">
+      <div style="font-size:36px;font-weight:bold;color:#333;">
         {currency} {balance:.2f}
       </div>
     </div>
@@ -372,6 +370,10 @@ def _build_result_html(signal, result: dict, stake: float) -> str:
         <td style="padding:10px 16px;border:1px solid #eee;font-weight:bold;color:{bg_color};">{dir_label}</td>
       </tr>
       <tr>
+        <td style="padding:10px 16px;border:1px solid #eee;font-weight:bold;background:#fafafa;">Platform</td>
+        <td style="padding:10px 16px;border:1px solid #eee;">IQ Option (DEMO)</td>
+      </tr>
+      <tr>
         <td style="padding:10px 16px;border:1px solid #eee;font-weight:bold;background:#fafafa;">Stake</td>
         <td style="padding:10px 16px;border:1px solid #eee;">{currency} {stake:.2f}</td>
       </tr>
@@ -387,7 +389,7 @@ def _build_result_html(signal, result: dict, stake: float) -> str:
       </tr>
       {price_move}
       <tr>
-        <td style="padding:10px 16px;border:1px solid #eee;font-weight:bold;background:#fafafa;">Signal Confidence</td>
+        <td style="padding:10px 16px;border:1px solid #eee;font-weight:bold;background:#fafafa;">Confidence</td>
         <td style="padding:10px 16px;border:1px solid #eee;">{signal.confidence_label} ({signal.strength:.0%})</td>
       </tr>
       <tr>
@@ -401,12 +403,13 @@ def _build_result_html(signal, result: dict, stake: float) -> str:
     </table>
   </div>
 
-  <!-- BALANCE CONTEXT -->
+  <!-- NEXT STAKE -->
   <div style="max-width:600px;margin:16px auto;background:#f8f9fa;border-radius:8px;
-              border-left:4px solid {'#0f9d58' if is_win else '#d93025'};padding:16px 20px;">
+              border-left:4px solid {bg_color};padding:16px 20px;">
     <p style="margin:0;font-size:14px;color:#333;">
-      Account balance updated to <strong>{currency} {balance:.2f}</strong>
-      after this trade. Next stake (2%): <strong>{currency} {balance * 0.02:.2f}</strong>
+      Balance updated to <strong>{currency} {balance:.2f}</strong>.
+      Next trade stake (2%, capped at ${MAX_TRADE_AMOUNT:.0f}):
+      <strong>{currency} {next_stake:.2f}</strong>
     </p>
   </div>
 
@@ -421,26 +424,29 @@ def _build_result_html(signal, result: dict, stake: float) -> str:
 </html>"""
 
 
-def _build_result_plain(signal, result: dict) -> str:
+def _build_result_plain(signal, result: dict, stake: float) -> str:
     outcome  = result["outcome"]
     profit   = result["profit"]
     balance  = result["balance"]
     currency = result["currency"]
     name     = PAIR_DISPLAY.get(signal.symbol, signal.symbol)
     sign     = "+" if profit >= 0 else ""
+    next_s   = _next_stake(balance)
     lines = [
         f"TRADE {outcome}",
-        f"Asset:   {name}  ({signal.direction})",
-        f"Profit:  {currency} {sign}{profit:.2f}",
-        f"Balance: {currency} {balance:.2f}",
-        f"Next stake (2%): {currency} {balance * 0.02:.2f}",
+        f"Asset:    {name}  ({signal.direction})",
+        f"Platform: IQ Option (DEMO)",
+        f"Stake:    {currency} {stake:.2f}",
+        f"Profit:   {currency} {sign}{profit:.2f}",
+        f"Balance:  {currency} {balance:.2f}",
+        f"Next stake (2%, capped at ${MAX_TRADE_AMOUNT:.0f}): {currency} {next_s:.2f}",
         f"Confidence: {signal.confidence_label} ({signal.strength:.0%})",
         f"Contract ID: {result.get('contract_id', 'n/a')}",
     ]
     return "\n".join(lines)
 
 
-# ── SMTP helper ────────────────────────────────────────────────────────────
+# ── SMTP helper ───────────────────────────────────────────────────────────────
 
 def _send(subject: str, html: str, plain: str) -> bool:
     try:
@@ -462,10 +468,7 @@ def _send(subject: str, html: str, plain: str) -> bool:
         return True
 
     except smtplib.SMTPAuthenticationError:
-        logger.error(
-            "SMTP authentication failed. "
-            "Check EMAIL_SENDER and EMAIL_PASSWORD in .env"
-        )
+        logger.error("SMTP authentication failed — check EMAIL_SENDER / EMAIL_PASSWORD")
         return False
     except Exception as e:
         logger.error(f"Failed to send email: {e}")
