@@ -4,12 +4,16 @@ Single-scan entry point — triggered by cron-job.org every 5 minutes.
 Flow:
   1. Session + news + strategy + correlation filters → signals
   2. Connect to IQ Option ONCE
-  3. Phase A — Place ALL trades immediately (no waiting between them)
-  4. Phase B — Wait ONCE for the last expiry (all trades expire together)
-  5. Phase C — Check results for every trade, then email + log
-  6. Disconnect
+  3. Phase A — Place trades with TRADE_PLACEMENT_DELAY between each
+               (staggered expiries so balance method works per-trade)
+  4. Phase B — Wait for each trade's individual expiry, check result,
+               then move to the next — balance reflects one trade at a time
+  5. Disconnect
 
-If IQ_EMAIL/IQ_PASSWORD not set, or connection fails → signal-only mode.
+Result detection strategy:
+  - Try check_win_v3 once (fast if WebSocket is fresh)
+  - Fall back to balance comparison — reliable because trades expire
+    60 seconds apart, so only ONE result hits the balance at a time
 
 Usage:
     python run_scan.py            # live mode
@@ -43,6 +47,10 @@ from strategy.trend_following import TrendFollowingStrategy, Signal
 from notifications.alerts import send_signal_email, send_trade_result_email
 from notifications.weekly_report import should_send_weekly, send_weekly_report
 from main import filter_correlated
+
+# Seconds between trade placements.
+# Creates a 60-second gap between expiries so balance method works per-trade.
+TRADE_PLACEMENT_DELAY = 60
 
 
 def iq_is_configured() -> bool:
@@ -131,17 +139,25 @@ def run():
             logger.warning("IQ Option unavailable — emailing signals only this scan")
 
     try:
-        amount = get_trade_amount(live_balance)
+        # ── Phase A: Place trades with 60-second gap between each ─────────
+        # The gap makes expiries stagger so balance method works per-trade.
+        placed: list[tuple[Signal, dict, float]] = []   # (signal, trade, amount)
 
-        # ── Phase A: Place ALL trades immediately ─────────────────────────
-        # Each trade is placed back-to-back (~2-5s apart) so they all expire
-        # within seconds of each other. No waiting happens here.
-        placed: list[tuple[Signal, dict]] = []   # (signal, trade_dict)
-
-        for sig in kept:
+        for i, sig in enumerate(kept):
             name      = config.PAIR_DISPLAY.get(sig.symbol, sig.symbol)
             iq_symbol = config.IQ_SYMBOLS.get(sig.symbol)
             can_trade = iq_client is not None and iq_symbol is not None
+
+            # Stagger placements — skip delay before first trade
+            if can_trade and i > 0:
+                logger.info(f"Waiting {TRADE_PLACEMENT_DELAY}s before next placement (staggering expiries) ...")
+                time.sleep(TRADE_PLACEMENT_DELAY)
+
+            # Refresh balance before each placement so amount is accurate
+            if can_trade:
+                iq_client.refresh_balance()
+
+            amount = get_trade_amount(iq_client.balance if can_trade else live_balance)
 
             if can_trade:
                 logger.info(f"Placing trade: {name} {sig.direction} USD {amount:.2f}")
@@ -152,83 +168,64 @@ def run():
                     duration_minutes=config.EXPIRY_MINUTES,
                 )
                 if trade:
-                    placed.append((sig, trade))
+                    placed.append((sig, trade, amount))
                     if not dry_run:
                         send_signal_email(sig, auto_trading=True, amount=amount)
-                    continue   # skip the signal-only email below
+                    continue
 
             # Trade not placed → signal-only email
             if not dry_run:
                 send_signal_email(sig, auto_trading=False, amount=amount)
 
-        # ── Phase B: Wait ONCE for all trades to expire ───────────────────
+        # ── Phase B: Check each trade's result individually ───────────────
+        # Trades expire 60s apart. We wait for each one, check its balance
+        # impact alone, then move to the next. No multi-trade ambiguity.
         if placed:
-            iq_client.wait_for_all([t for _, t in placed])
+            # Refresh once after all stakes are placed — this is the true
+            # pre-expiry balance (stakes already deducted by IQ Option).
+            pre_balance = iq_client.refresh_balance()
+            logger.info(f"Pre-expiry balance (all stakes out): USD {pre_balance:.2f}")
 
-        # ── Phase C: Check results for all placed trades ──────────────────
-        if placed:
-            # Try check_win_v3 for each trade (trade-specific, no balance ambiguity)
-            results: dict[int, dict] = {}   # trade_id → result
-            known_net = 0.0
+            for sig, trade, amount in placed:
+                name = config.PAIR_DISPLAY.get(sig.symbol, sig.symbol)
 
-            for sig, trade in placed:
-                result = iq_client.check_result(trade)
-                if result:
-                    results[trade["trade_id"]] = result
-                    known_net += result["profit"]
+                # Wait for this specific trade's expiry
+                iq_client._wait_until(trade["expiry_epoch"], label=f"{trade['symbol']} {trade['trade_id']}")
 
-            # Balance inference for any trade where check_win_v3 failed
-            unknown = [(sig, trade) for sig, trade in placed if trade["trade_id"] not in results]
+                # Try check_win_v3 once (fast path, rarely works but costs only 15s)
+                result = iq_client.check_result(trade, max_retries=1)
 
-            if len(unknown) == 1:
-                # Single unknown: total balance change minus known results = this trade
-                sig, trade = unknown[0]
-                final_balance = iq_client.refresh_balance()
-                total_net     = round(final_balance - trade["balance_before"], 2)
-                trade_net     = round(total_net - known_net, 2)
-                outcome       = "WIN" if trade_net > 0 else "LOSS"
+                if result is None:
+                    # Balance method — reliable because this is the only
+                    # trade that has just expired (others expire 60s later)
+                    new_balance  = iq_client.refresh_balance()
+                    net          = round(new_balance - pre_balance, 2)
+                    outcome      = "WIN" if net > amount * 0.5 else "LOSS"
+                    profit       = round(net - amount, 2) if outcome == "WIN" else -amount
+                    logger.info(
+                        f"RESULT (balance): {trade['symbol']} {trade['direction']} → {outcome} | "
+                        f"Net: USD {net:+.2f} | Profit: USD {profit:+.2f} | Balance: USD {new_balance:.2f}"
+                    )
+                    result = {
+                        "outcome":     outcome,
+                        "profit":      profit,
+                        "stake":       amount,
+                        "payout":      new_balance - pre_balance if outcome == "WIN" else 0.0,
+                        "entry_spot":  0.0,
+                        "exit_spot":   0.0,
+                        "balance":     new_balance,
+                        "currency":    "USD",
+                        "contract_id": trade["trade_id"],
+                    }
+                    pre_balance = new_balance   # update for next trade
+
+                else:
+                    # check_win_v3 worked — still update pre_balance
+                    pre_balance = result["balance"]
+
                 logger.info(
-                    f"RESULT (inferred): {trade['symbol']} {trade['direction']} → {outcome} | "
-                    f"Net: USD {trade_net:+.2f} | Balance: USD {final_balance:.2f}"
-                )
-                results[trade["trade_id"]] = {
-                    "outcome":     outcome,
-                    "profit":      trade_net,
-                    "stake":       amount,
-                    "payout":      amount + trade_net if trade_net > 0 else 0.0,
-                    "entry_spot":  0.0,
-                    "exit_spot":   0.0,
-                    "balance":     final_balance,
-                    "currency":    "USD",
-                    "contract_id": trade["trade_id"],
-                }
-
-            elif len(unknown) > 1:
-                # Multiple unknowns: can't split balance change reliably
-                # Fall back to individual balance method per trade
-                for sig, trade in unknown:
-                    result = iq_client._result_from_balance(trade)
-                    if result:
-                        results[trade["trade_id"]] = result
-                        logger.warning(
-                            f"Balance fallback for {trade['symbol']} may be inaccurate "
-                            f"when multiple trades expire simultaneously — verify on portal"
-                        )
-
-            # Send result emails and log every confirmed result
-            for sig, trade in placed:
-                result = results.get(trade["trade_id"])
-                if not result:
-                    logger.warning(f"No result retrieved for trade {trade['trade_id']} — check IQ Option portal")
-                    continue
-
-                name    = config.PAIR_DISPLAY.get(sig.symbol, sig.symbol)
-                outcome = result["outcome"]
-                profit  = result["profit"]
-                balance = result["balance"]
-                logger.info(
-                    f"{'WIN' if outcome == 'WIN' else 'LOSS'}: {name} {sig.direction} | "
-                    f"Profit: USD {profit:+.2f} | Balance: USD {balance:.2f}"
+                    f"{'WIN' if result['outcome'] == 'WIN' else 'LOSS'}: {name} {sig.direction} | "
+                    f"Profit: USD {result['profit']:+.2f} | Balance: USD {result['balance']:.2f}"
                 )
                 if not dry_run:
                     send_trade_result_email(sig, result, amount)

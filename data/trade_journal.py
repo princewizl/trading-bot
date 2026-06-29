@@ -133,6 +133,11 @@ def _gist_append(row: dict) -> bool:
     existing = _gist_read()
     if existing is None:
         return False
+    # Deduplicate by contract_id — never log the same trade twice
+    cid = str(row.get("contract_id", ""))
+    if cid and any(str(r.get("contract_id", "")) == cid for r in existing):
+        logger.warning(f"Duplicate contract_id {cid} — skipping journal write")
+        return True
     existing.append(row)
     return _gist_write(existing)
 
