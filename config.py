@@ -44,7 +44,7 @@ HTF_EMA_FAST = 10
 HTF_EMA_SLOW = 30
 
 ADX_PERIOD    = 14
-ADX_HARD_MIN  = 25         # Hard floor — signal blocked entirely below this, regardless of other checks
+ADX_HARD_MIN  = 22         # Hard floor — signal blocked entirely below this, regardless of other checks
 ADX_THRESHOLD = 28         # Soft check inside the 10-confluence scoring (one of 10 checks)
 
 RSI_PERIOD       = 14
