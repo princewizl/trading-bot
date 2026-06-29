@@ -26,7 +26,7 @@ import pandas as pd
 from config import (
     EMA_FAST, EMA_SLOW, EMA_TREND,
     HTF_EMA_FAST, HTF_EMA_SLOW,
-    ADX_THRESHOLD,
+    ADX_HARD_MIN, ADX_THRESHOLD,
     RSI_BULL_MIN, RSI_BULL_MAX, RSI_BEAR_MIN, RSI_BEAR_MAX,
     BB_SQUEEZE_THRESHOLD,
     MIN_SIGNAL_STRENGTH, SIGNAL_COOLDOWN_MINUTES,
@@ -150,6 +150,11 @@ class TrendFollowingStrategy:
 
         pattern   = detect_pattern(df)
         htf_trend = get_htf_trend(htf_df)
+
+        # ── Hard ADX gate — block ranging markets before scoring ──────
+        if adx < ADX_HARD_MIN:
+            logger.debug(f"SKIP {symbol}: ADX {adx:.1f} < {ADX_HARD_MIN} (ranging market — no trade)")
+            return self._no_signal(symbol, df, f"ADX {adx:.1f} below minimum {ADX_HARD_MIN} — market is ranging")
 
         # ── 10 BUY checks ────────────────────────────────────────────
         buy = {

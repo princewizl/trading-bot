@@ -44,7 +44,8 @@ HTF_EMA_FAST = 10
 HTF_EMA_SLOW = 30
 
 ADX_PERIOD    = 14
-ADX_THRESHOLD = 28         # Raised from 25 — requires confirmed trend strength
+ADX_HARD_MIN  = 25         # Hard floor — signal blocked entirely below this, regardless of other checks
+ADX_THRESHOLD = 28         # Soft check inside the 10-confluence scoring (one of 10 checks)
 
 RSI_PERIOD       = 14
 RSI_OVERBOUGHT   = 72
@@ -136,7 +137,7 @@ CURRENCY = "₦"   # Nigerian Naira
 # ─── Risk / Session Limits ───────────────────────────────────────────────────
 ACCOUNT_BALANCE      = float(os.getenv("ACCOUNT_BALANCE", "50000"))
 TRADE_AMOUNT_PCT     = 0.02    # Stake = 2% of live Deriv balance
-MAX_TRADE_AMOUNT     = 100.0   # Hard cap: never risk more than $10 per trade
+MAX_TRADE_AMOUNT     = 50.0   # Hard cap: never risk more than $10 per trade
 MIN_TRADE_AMOUNT     = 1.0    # Deriv minimum stake (most forex pairs)
 MAX_CONSECUTIVE_LOSSES = 3
 MAX_DAILY_LOSS_PCT   = 0.06
