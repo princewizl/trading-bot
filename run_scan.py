@@ -205,6 +205,19 @@ def run():
                     amount=amount,
                     duration_minutes=config.EXPIRY_MINUTES,
                 )
+                # IQ Option sometimes suspends a pair briefly at H1 boundaries
+                # or news events — wait 90 s and try once more before giving up.
+                if trade is None:
+                    logger.info(f"Placement rejected — waiting 90s then retrying {name} ...")
+                    time.sleep(90)
+                    iq_client.refresh_balance()
+                    amount = get_trade_amount(iq_client.balance)
+                    trade = iq_client.place_trade(
+                        symbol=iq_symbol,
+                        direction=sig.direction,
+                        amount=amount,
+                        duration_minutes=config.EXPIRY_MINUTES,
+                    )
                 if trade:
                     placed.append((sig, trade, amount))
                     if not dry_run:
