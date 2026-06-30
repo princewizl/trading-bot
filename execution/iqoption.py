@@ -29,12 +29,13 @@ CONNECT_TIMEOUT = 45   # seconds — covers IQ_Option() constructor + WebSocket 
 
 class IQClient:
     def __init__(self, email: str, password: str, demo: bool = True):
-        self.email    = email
-        self.password = password
-        self.demo     = demo
-        self.iq       = None
-        self.balance  = 0.0
-        self.currency = "USD"
+        self.email        = email
+        self.password     = password
+        self.demo         = demo
+        self.iq           = None
+        self.balance      = 0.0
+        self.currency     = "USD"
+        self.open_symbols: set[str] | None = None   # populated after connect()
 
     # ── Connection ────────────────────────────────────────────────────────
 
@@ -76,10 +77,13 @@ class IQClient:
         account = "PRACTICE" if self.demo else "REAL"
         self.iq.change_balance(account)
         self.balance = self._safe_get_balance()
+        self.open_symbols = self._fetch_open_symbols()
 
+        open_count = len(self.open_symbols) if self.open_symbols is not None else "?"
         logger.info(
             f"IQ Option connected ({'DEMO' if self.demo else 'LIVE'}) | "
-            f"Balance: USD {self.balance:.2f}"
+            f"Balance: USD {self.balance:.2f} | "
+            f"Open assets: {open_count}"
         )
         return True
 
@@ -118,6 +122,15 @@ class IQClient:
         OTC markets have lower payouts (61–75%) so we risk less on them.
         """
         action = "call" if direction == "BUY" else "put"
+
+        # Skip immediately if IQ Option told us this asset is closed right now.
+        # open_symbols=None means the availability check failed — try anyway.
+        if self.open_symbols is not None and symbol not in self.open_symbols:
+            logger.info(
+                f"{symbol} binary option is closed on IQ Option right now "
+                f"(confirmed by get_all_open_time) — skipping"
+            )
+            return None
 
         for ticker in [symbol, f"{symbol}-OTC"]:
             is_otc  = ticker.endswith("-OTC")
@@ -267,6 +280,35 @@ class IQClient:
         return result[0]
 
     # ── Internal ──────────────────────────────────────────────────────────
+
+    def _fetch_open_symbols(self) -> set[str] | None:
+        """
+        Ask IQ Option which assets are currently open for binary/turbo trading.
+        Returns a set of uppercase ticker strings (e.g. {'EURUSD', 'GBPUSD'}).
+        Returns None if the call fails or times out — callers treat None as
+        'unknown, try anyway' so we never silently skip a tradeable pair.
+        """
+        result = [None]
+
+        def _fetch():
+            try:
+                data = self.iq.get_all_open_time()
+                if not isinstance(data, dict):
+                    return
+                open_set: set[str] = set()
+                for category in ("turbo", "binary", "digital"):
+                    for symbol, info in data.get(category, {}).items():
+                        if isinstance(info, dict) and info.get("open"):
+                            open_set.add(symbol.upper().replace("-OTC", ""))
+                            # also keep OTC variant as open if base is open
+                result[0] = open_set
+            except Exception as e:
+                logger.debug(f"get_all_open_time failed: {e}")
+
+        t = threading.Thread(target=_fetch, daemon=True)
+        t.start()
+        t.join(timeout=10)
+        return result[0]
 
     def _buy(self, ticker: str, action: str, amount: float, duration: int):
         try:

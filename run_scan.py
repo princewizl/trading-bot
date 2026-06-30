@@ -205,16 +205,23 @@ def run():
                     amount=amount,
                     duration_minutes=config.EXPIRY_MINUTES,
                 )
-                # IQ Option suspends binary pricing briefly at H1 boundaries.
-                # Retry once after 90s — BUT only if there's no news event nearby.
-                # If IQ Option is blocking because of news, the market after the
-                # news is already priced-in and the signal direction may have flipped.
+                # Retry once after 90s for brief H1-boundary pauses.
+                # Skip retry if: news is active, OR IQ Option's open-time API
+                # already confirmed this asset is closed (saves 90s of wasted wait).
                 if trade is None:
+                    market_confirmed_closed = (
+                        iq_client.open_symbols is not None
+                        and iq_symbol not in iq_client.open_symbols
+                    )
                     news_now, news_reason = is_news_blocked(sig.symbol)
-                    if news_now:
+                    if market_confirmed_closed:
                         logger.info(
-                            f"Skipping retry for {name} — news event active ({news_reason}). "
-                            f"IQ Option suspension is protective here."
+                            f"{name} binary option is closed on IQ Option right now — "
+                            f"no retry (not a temporary pause)"
+                        )
+                    elif news_now:
+                        logger.info(
+                            f"Skipping retry for {name} — news event active ({news_reason})"
                         )
                     else:
                         logger.info(f"Placement rejected — waiting 90s then retrying {name} ...")
