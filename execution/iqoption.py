@@ -326,11 +326,30 @@ class IQClient:
 
         return False, None
 
-    def _next_clock_expiry(self, duration_minutes: int) -> int:
-        """Unix timestamp of the next N-minute clock boundary (e.g. :20, :25, :30)."""
+    def _next_clock_expiry(self, duration_minutes: int, min_remaining: int = 3) -> int:
+        """
+        Unix timestamp of the next viable N-minute clock boundary.
+
+        If less than min_remaining minutes remain before the next boundary,
+        skip it and use the one after — a 1-minute binary option on a
+        5-minute strategy has no edge and is financially unsound.
+
+        Example with duration=5, min_remaining=3:
+          Placed at :22 → 3 min to :25 → use :25  (3 min)  ✓
+          Placed at :23 → 2 min to :25 → skip, use :30 (7 min) ✓
+          Placed at :24 → 1 min to :25 → skip, use :30 (6 min) ✓
+        """
         from datetime import timedelta
-        now     = datetime.now(timezone.utc).replace(second=0, microsecond=0)
-        # How many whole intervals have passed this hour?
-        passed  = now.minute // duration_minutes
-        expiry  = now + timedelta(minutes=(passed + 1) * duration_minutes - now.minute)
+        now    = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+        passed = now.minute // duration_minutes
+        # Minutes until the immediately next boundary
+        remaining = (passed + 1) * duration_minutes - now.minute
+        # If too close, advance by one more interval
+        intervals_ahead = 1 if remaining >= min_remaining else 2
+        delta  = intervals_ahead * duration_minutes - now.minute % duration_minutes
+        expiry = now + timedelta(minutes=delta)
+        logger.info(
+            f"Clock-time expiry: {expiry.strftime('%H:%M')} UTC "
+            f"({delta} min from now)"
+        )
         return int(expiry.timestamp())
