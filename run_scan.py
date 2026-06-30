@@ -42,7 +42,7 @@ from data.fetcher import fetch_ohlcv
 from data.indicators import add_all_indicators
 from data.session import is_session_active, active_sessions_now, minutes_to_next_session
 from data.calendar import is_news_blocked, next_news_events
-from data.trade_journal import log_trade, circuit_breaker_check
+from data.trade_journal import log_trade, circuit_breaker_check, get_recent_signal_pairs, log_signal_emission
 from strategy.trend_following import TrendFollowingStrategy, Signal
 from notifications.alerts import send_signal_email, send_trade_result_email
 from notifications.weekly_report import should_send_weekly, send_weekly_report
@@ -80,6 +80,15 @@ def run():
         if not can_trade:
             logger.warning(f"CIRCUIT BREAKER ACTIVE: {cb_reason}")
             return
+
+    # ── Persistent cross-run cooldown ─────────────────────────────────────
+    # Each GitHub Actions run is a fresh process — in-memory cooldown resets.
+    # Read the Gist journal to suppress pairs that signalled recently.
+    recently_signalled: set[str] = set()
+    if not dry_run:
+        recently_signalled = get_recent_signal_pairs(cooldown_minutes=config.SIGNAL_COOLDOWN_MINUTES)
+        if recently_signalled:
+            logger.info(f"Cross-run cooldown active for: {', '.join(recently_signalled)}")
 
     if not dry_run and should_send_weekly():
         logger.info("Sunday 20:00 UTC — sending weekly performance report")
@@ -127,6 +136,14 @@ def run():
     dropped = len(candidates) - len(kept)
     if dropped:
         logger.info(f"Correlation filter removed {dropped} redundant signal(s)")
+
+    # ── 3. Cross-run cooldown filter ──────────────────────────────────────
+    if recently_signalled:
+        before = len(kept)
+        kept = [s for s in kept if s.symbol not in recently_signalled]
+        skipped = before - len(kept)
+        if skipped:
+            logger.info(f"Cross-run cooldown suppressed {skipped} repeated signal(s)")
 
     if not kept:
         logger.info("Scan complete — no actionable signals this cycle")
@@ -185,11 +202,13 @@ def run():
                 if trade:
                     placed.append((sig, trade, amount))
                     if not dry_run:
+                        log_signal_emission(sig, amount)   # persist cooldown
                         send_signal_email(sig, auto_trading=True, amount=amount)
                     continue
 
             # Trade not placed → signal-only email
             if not dry_run:
+                log_signal_emission(sig, amount)           # persist cooldown
                 send_signal_email(sig, auto_trading=False, amount=amount)
 
         # ── Phase B: Check each trade's result individually ───────────────

@@ -19,7 +19,7 @@ import csv
 import io
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests
@@ -63,6 +63,59 @@ def get_all_trades() -> list[dict]:
     if LOCAL_FILE.exists():
         return _local_read()
     return []
+
+
+def log_signal_emission(signal, amount: float) -> bool:
+    """
+    Log a signal-only emission (no trade placed) so the cooldown persists
+    across stateless GitHub Actions runs. Outcome is 'SIGNAL', profit is 0.
+    Skips Gist write if the same pair already has a recent SIGNAL entry
+    (avoids Gist growth during long-running signal sequences).
+    """
+    # Don't write if we already logged a signal for this pair recently
+    recent = get_recent_signal_pairs(cooldown_minutes=14)  # slightly under 15-min cooldown
+    if signal.symbol in recent:
+        return True   # already suppressed — no write needed
+
+    row = _build_row(
+        signal,
+        {"outcome": "SIGNAL", "profit": 0, "balance": 0, "currency": "USD", "contract_id": ""},
+        amount,
+        "",
+    )
+    row["contract_id"] = ""   # empty so dedup check is skipped
+    if GIST_ID and GIST_TOKEN:
+        existing = _gist_read()
+        if existing is not None:
+            existing.append(row)
+            return _gist_write(existing)
+    return _local_append(row)
+
+
+def get_recent_signal_pairs(cooldown_minutes: int = 15) -> set[str]:
+    """
+    Return the set of pair symbols (yfinance format, e.g. 'AUDUSD=X') that
+    have had any journal entry (trade OR signal) within the last
+    cooldown_minutes. Used to prevent repeated emissions across runs.
+    """
+    try:
+        trades = get_all_trades()
+    except Exception:
+        return set()
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=cooldown_minutes)
+    recent: set[str] = set()
+    for t in trades:
+        ts_str = t.get("timestamp", "")
+        if not ts_str:
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_str)
+            if ts >= cutoff:
+                recent.add(t.get("pair", ""))
+        except ValueError:
+            pass
+    return recent
 
 
 def circuit_breaker_check() -> tuple[bool, str]:
