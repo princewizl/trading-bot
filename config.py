@@ -140,7 +140,6 @@ TRADE_AMOUNT_PCT     = 0.02    # Stake = 2% of live Deriv balance
 MAX_TRADE_AMOUNT     = 10_000.0  # No cap — 2% rule governs; IQ Option's own limit is the real ceiling
 MIN_TRADE_AMOUNT     = 1.0    # Deriv minimum stake (most forex pairs)
 MAX_CONSECUTIVE_LOSSES = 3
-MAX_DAILY_LOSS_PCT   = 0.06
 MAX_DAILY_SIGNALS    = 50      # Cap emails per day
 
 # ─── Martingale (keep disabled — extremely high risk) ───────────────────────

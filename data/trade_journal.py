@@ -123,13 +123,10 @@ def circuit_breaker_check() -> tuple[bool, str]:
     Returns (can_trade, reason).
     can_trade=False means halt all trading this scan.
 
-    Checks (in order):
-      1. Last 3 completed trades all LOSS → consecutive loss limit
-      2. Today's realised P&L exceeds MAX_DAILY_LOSS_PCT → daily loss limit
-    Silently passes if journal is unavailable (fail-open so we don't miss
-    good signals when Gist is down, but we log a warning).
+    Halts when the last MAX_CONSECUTIVE_LOSSES completed trades are all losses.
+    Fail-open: if the journal is unavailable, trading continues (we log a warning).
     """
-    from config import MAX_CONSECUTIVE_LOSSES, MAX_DAILY_LOSS_PCT
+    from config import MAX_CONSECUTIVE_LOSSES
 
     try:
         all_trades = get_all_trades()
@@ -140,7 +137,6 @@ def circuit_breaker_check() -> tuple[bool, str]:
     if not all_trades:
         return True, ""
 
-    # 1. Consecutive loss check
     completed = [t for t in all_trades if t.get("outcome") in ("WIN", "LOSS")]
     tail = completed[-MAX_CONSECUTIVE_LOSSES:]
     if len(tail) == MAX_CONSECUTIVE_LOSSES and all(t["outcome"] == "LOSS" for t in tail):
@@ -149,26 +145,6 @@ def circuit_breaker_check() -> tuple[bool, str]:
             f"Resume next session or manually override."
         )
         return False, reason
-
-    # 2. Daily loss check
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    today_trades = [
-        t for t in completed
-        if t.get("timestamp", "").startswith(today)
-    ]
-    if today_trades:
-        daily_pnl = sum(float(t.get("profit", 0)) for t in today_trades)
-        if daily_pnl < 0:
-            last_balance = float(today_trades[-1].get("balance_after", 0))
-            if last_balance > 0:
-                loss_pct = abs(daily_pnl) / last_balance
-                if loss_pct >= MAX_DAILY_LOSS_PCT:
-                    reason = (
-                        f"Daily loss limit hit: {loss_pct:.1%} lost today "
-                        f"(USD {daily_pnl:.2f}) — limit is {MAX_DAILY_LOSS_PCT:.0%}. "
-                        f"Trading suspended until tomorrow."
-                    )
-                    return False, reason
 
     return True, ""
 
