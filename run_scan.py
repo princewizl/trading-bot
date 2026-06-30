@@ -205,19 +205,28 @@ def run():
                     amount=amount,
                     duration_minutes=config.EXPIRY_MINUTES,
                 )
-                # IQ Option sometimes suspends a pair briefly at H1 boundaries
-                # or news events — wait 90 s and try once more before giving up.
+                # IQ Option suspends binary pricing briefly at H1 boundaries.
+                # Retry once after 90s — BUT only if there's no news event nearby.
+                # If IQ Option is blocking because of news, the market after the
+                # news is already priced-in and the signal direction may have flipped.
                 if trade is None:
-                    logger.info(f"Placement rejected — waiting 90s then retrying {name} ...")
-                    time.sleep(90)
-                    iq_client.refresh_balance()
-                    amount = get_trade_amount(iq_client.balance)
-                    trade = iq_client.place_trade(
-                        symbol=iq_symbol,
-                        direction=sig.direction,
-                        amount=amount,
-                        duration_minutes=config.EXPIRY_MINUTES,
-                    )
+                    news_now, news_reason = is_news_blocked(sig.symbol)
+                    if news_now:
+                        logger.info(
+                            f"Skipping retry for {name} — news event active ({news_reason}). "
+                            f"IQ Option suspension is protective here."
+                        )
+                    else:
+                        logger.info(f"Placement rejected — waiting 90s then retrying {name} ...")
+                        time.sleep(90)
+                        iq_client.refresh_balance()
+                        amount = get_trade_amount(iq_client.balance)
+                        trade = iq_client.place_trade(
+                            symbol=iq_symbol,
+                            direction=sig.direction,
+                            amount=amount,
+                            duration_minutes=config.EXPIRY_MINUTES,
+                        )
                 if trade:
                     placed.append((sig, trade, amount))
                     if not dry_run:
