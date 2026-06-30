@@ -311,11 +311,35 @@ class IQClient:
         return result[0]
 
     def _buy(self, ticker: str, action: str, amount: float, duration: int):
+        # Attempt 1: duration-based (turbo — "5 minutes from now")
         try:
             status, trade_id = self.iq.buy(amount, ticker, action, duration)
-            if not status:
-                logger.warning(f"IQ buy rejected: {ticker} {action} (pair may be closed)")
-            return status, trade_id
+            if status:
+                return True, trade_id
+            logger.warning(f"IQ buy rejected: {ticker} {action} (pair may be closed)")
         except Exception as e:
             logger.warning(f"IQ buy error ({ticker}): {e}")
-            return False, None
+
+        # Attempt 2: clock-time-based binary ("expires at HH:MM:00")
+        # IQ Option changed some pairs from duration-based to clock-time expiry.
+        # Calculate the next N-minute clock boundary and pass it as a timestamp.
+        try:
+            expiry_ts = self._next_clock_expiry(duration)
+            status, trade_id = self.iq.buy_with_expire_date(amount, ticker, action, expiry_ts)
+            if status:
+                logger.info(f"Clock-time expiry worked for {ticker} (expires {expiry_ts})")
+                return True, trade_id
+            logger.warning(f"IQ clock-time buy rejected: {ticker} {action}")
+        except Exception as e:
+            logger.warning(f"IQ clock-time buy error ({ticker}): {e}")
+
+        return False, None
+
+    def _next_clock_expiry(self, duration_minutes: int) -> int:
+        """Unix timestamp of the next N-minute clock boundary (e.g. :20, :25, :30)."""
+        from datetime import timedelta
+        now     = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+        # How many whole intervals have passed this hour?
+        passed  = now.minute // duration_minutes
+        expiry  = now + timedelta(minutes=(passed + 1) * duration_minutes - now.minute)
+        return int(expiry.timestamp())
