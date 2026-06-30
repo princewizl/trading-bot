@@ -9,7 +9,6 @@ from config import (
     MAX_TRADE_AMOUNT,
     MIN_TRADE_AMOUNT,
     MAX_CONSECUTIVE_LOSSES,
-    MAX_DAILY_LOSS_PCT,
     MAX_DAILY_SIGNALS as MAX_DAILY_TRADES,
     MARTINGALE_ENABLED,
     MARTINGALE_MULTIPLIER,
@@ -55,10 +54,6 @@ class RiskManager:
 
         if self.consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
             return False, f"Max consecutive losses reached ({MAX_CONSECUTIVE_LOSSES}). Pausing."
-
-        daily_loss = self.daily_start_balance - self.balance
-        if daily_loss >= self.daily_start_balance * MAX_DAILY_LOSS_PCT:
-            return False, f"Daily loss limit hit ({MAX_DAILY_LOSS_PCT:.0%} of day-start balance)."
 
         if len(self.today_trades) >= MAX_DAILY_TRADES:
             return False, f"Daily trade limit reached ({MAX_DAILY_TRADES} trades)."
