@@ -129,9 +129,8 @@ class IQClient:
             stake   = round(amount * (otc_stake_pct if is_otc else 1.0), 2)
             stake   = max(stake, 1.0)   # never below IQ Option minimum
 
-            status, trade_id = self._buy(ticker, action, stake, duration_minutes)
+            status, trade_id, expiry_epoch = self._buy(ticker, action, stake, duration_minutes)
             if status:
-                expiry_epoch = int(time.time()) + (duration_minutes * 60)
                 trade = {
                     "trade_id":      trade_id,
                     "symbol":        ticker,
@@ -302,29 +301,31 @@ class IQClient:
         return result[0]
 
     def _buy(self, ticker: str, action: str, amount: float, duration: int):
+        """
+        Returns (status, trade_id, expiry_epoch).
+        expiry_epoch is the actual Unix timestamp when the trade expires —
+        important for the clock-time path where expiry differs from now+duration.
+        """
         # Attempt 1: duration-based (turbo — "5 minutes from now")
         try:
             status, trade_id = self.iq.buy(amount, ticker, action, duration)
             if status:
-                return True, trade_id
+                return True, trade_id, int(time.time()) + duration * 60
             logger.warning(f"IQ buy rejected: {ticker} {action} (pair may be closed)")
         except Exception as e:
             logger.warning(f"IQ buy error ({ticker}): {e}")
 
         # Attempt 2: clock-time-based binary ("expires at HH:MM:00")
-        # IQ Option changed some pairs from duration-based to clock-time expiry.
-        # Calculate the next N-minute clock boundary and pass it as a timestamp.
         try:
             expiry_ts = self._next_clock_expiry(duration)
             status, trade_id = self.iq.buy_with_expire_date(amount, ticker, action, expiry_ts)
             if status:
-                logger.info(f"Clock-time expiry worked for {ticker} (expires {expiry_ts})")
-                return True, trade_id
+                return True, trade_id, expiry_ts   # use actual clock expiry
             logger.warning(f"IQ clock-time buy rejected: {ticker} {action}")
         except Exception as e:
             logger.warning(f"IQ clock-time buy error ({ticker}): {e}")
 
-        return False, None
+        return False, None, 0
 
     def _next_clock_expiry(self, duration_minutes: int, min_remaining: int = 3) -> int:
         """
