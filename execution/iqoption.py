@@ -123,15 +123,6 @@ class IQClient:
         """
         action = "call" if direction == "BUY" else "put"
 
-        # Skip immediately if IQ Option told us this asset is closed right now.
-        # open_symbols=None means the availability check failed — try anyway.
-        if self.open_symbols is not None and symbol not in self.open_symbols:
-            logger.info(
-                f"{symbol} binary option is closed on IQ Option right now "
-                f"(confirmed by get_all_open_time) — skipping"
-            )
-            return None
-
         for ticker in [symbol, f"{symbol}-OTC"]:
             is_otc  = ticker.endswith("-OTC")
             # Reduce stake for OTC to compensate for lower payout
