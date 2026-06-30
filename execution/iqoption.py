@@ -303,54 +303,21 @@ class IQClient:
     def _buy(self, ticker: str, action: str, amount: float, duration: int):
         """
         Returns (status, trade_id, expiry_epoch).
-        expiry_epoch is the actual Unix timestamp when the trade expires —
-        important for the clock-time path where expiry differs from now+duration.
+
+        Turbo only (duration-based, e.g. "5 minutes from now"). IQ Option's
+        binary option type (the other expiry class this API exposes) is
+        aligned to 15-minute clock boundaries, not 5 — riding a 5-minute
+        confluence signal for 15-60 minutes doesn't match what the strategy
+        was built for, so we don't fall back to it. If turbo is rejected
+        (pair closed for short-duration options right now), the caller
+        treats it as a failed placement and sends a signal-only email.
         """
-        # Attempt 1: duration-based (turbo — "5 minutes from now")
         try:
             status, trade_id = self.iq.buy(amount, ticker, action, duration)
             if status:
                 return True, trade_id, int(time.time()) + duration * 60
-            logger.warning(f"IQ buy rejected: {ticker} {action} (pair may be closed)")
+            logger.warning(f"IQ buy rejected: {ticker} {action} (pair may be closed for turbo right now)")
         except Exception as e:
             logger.warning(f"IQ buy error ({ticker}): {e}")
 
-        # Attempt 2: clock-time-based binary ("expires at HH:MM:00")
-        try:
-            expiry_ts = self._next_clock_expiry(duration)
-            status, trade_id = self.iq.buy_with_expire_date(amount, ticker, action, expiry_ts)
-            if status:
-                return True, trade_id, expiry_ts   # use actual clock expiry
-            logger.warning(f"IQ clock-time buy rejected: {ticker} {action}")
-        except Exception as e:
-            logger.warning(f"IQ clock-time buy error ({ticker}): {e}")
-
         return False, None, 0
-
-    def _next_clock_expiry(self, duration_minutes: int, min_remaining: int = 3) -> int:
-        """
-        Unix timestamp of the next viable N-minute clock boundary.
-
-        If less than min_remaining minutes remain before the next boundary,
-        skip it and use the one after — a 1-minute binary option on a
-        5-minute strategy has no edge and is financially unsound.
-
-        Example with duration=5, min_remaining=3:
-          Placed at :22 → 3 min to :25 → use :25  (3 min)  ✓
-          Placed at :23 → 2 min to :25 → skip, use :30 (7 min) ✓
-          Placed at :24 → 1 min to :25 → skip, use :30 (6 min) ✓
-        """
-        from datetime import timedelta
-        now    = datetime.now(timezone.utc).replace(second=0, microsecond=0)
-        passed = now.minute // duration_minutes
-        # Minutes until the immediately next boundary
-        remaining = (passed + 1) * duration_minutes - now.minute
-        # If too close, advance by one more interval
-        intervals_ahead = 1 if remaining >= min_remaining else 2
-        delta  = intervals_ahead * duration_minutes - now.minute % duration_minutes
-        expiry = now + timedelta(minutes=delta)
-        logger.info(
-            f"Clock-time expiry: {expiry.strftime('%H:%M')} UTC "
-            f"({delta} min from now)"
-        )
-        return int(expiry.timestamp())
