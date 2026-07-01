@@ -123,10 +123,16 @@ def circuit_breaker_check() -> tuple[bool, str]:
     Returns (can_trade, reason).
     can_trade=False means halt all trading this scan.
 
-    Halts when the last MAX_CONSECUTIVE_LOSSES completed trades are all losses.
+    Halts when the last MAX_CONSECUTIVE_LOSSES completed trades are all losses
+    AND all happened within the last CIRCUIT_BREAKER_WINDOW_HOURS hours.
+
+    The time window prevents yesterday's losing streak from freezing today's
+    session — which would be a dead-lock since the bot can't trade its way out.
     Fail-open: if the journal is unavailable, trading continues (we log a warning).
     """
     from config import MAX_CONSECUTIVE_LOSSES
+
+    WINDOW_HOURS = 4   # only losses within this window count toward the streak
 
     try:
         all_trades = get_all_trades()
@@ -139,14 +145,28 @@ def circuit_breaker_check() -> tuple[bool, str]:
 
     completed = [t for t in all_trades if t.get("outcome") in ("WIN", "LOSS")]
     tail = completed[-MAX_CONSECUTIVE_LOSSES:]
-    if len(tail) == MAX_CONSECUTIVE_LOSSES and all(t["outcome"] == "LOSS" for t in tail):
-        reason = (
-            f"{MAX_CONSECUTIVE_LOSSES} consecutive losses — halting to protect capital. "
-            f"Resume next session or manually override."
-        )
-        return False, reason
+    if len(tail) < MAX_CONSECUTIVE_LOSSES:
+        return True, ""
 
-    return True, ""
+    if not all(t["outcome"] == "LOSS" for t in tail):
+        return True, ""
+
+    # All 3 are losses — check if the oldest one is still within the window.
+    # If the streak started more than WINDOW_HOURS ago it belongs to a prior
+    # session and should not carry over.
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=WINDOW_HOURS)
+    try:
+        oldest_ts = datetime.fromisoformat(tail[0]["timestamp"])
+        if oldest_ts < cutoff:
+            return True, ""
+    except (ValueError, KeyError):
+        pass   # unparseable timestamp — don't block on bad data
+
+    reason = (
+        f"{MAX_CONSECUTIVE_LOSSES} consecutive losses within {WINDOW_HOURS}h — "
+        f"halting to protect capital. Will auto-reset next session."
+    )
+    return False, reason
 
 
 def is_configured() -> bool:
