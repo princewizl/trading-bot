@@ -118,6 +118,39 @@ def get_recent_signal_pairs(cooldown_minutes: int = 15) -> set[str]:
     return recent
 
 
+def get_recently_traded_pairs(cooldown_minutes: int = 15) -> set[str]:
+    """
+    Return pairs that had an auto-placed trade (WIN/LOSS/UNKNOWN) within
+    the last cooldown_minutes. Excludes SIGNAL-only entries so a signal
+    email never counts as a trade for cooldown purposes.
+
+    Used in run_scan.py to prevent the same pair from firing a second
+    auto-trade before the first one's result has had time to play out.
+    GitHub Actions runs are stateless — without this check the same pair
+    can fire every 5 minutes indefinitely.
+    """
+    try:
+        trades = get_all_trades()
+    except Exception:
+        return set()
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=cooldown_minutes)
+    recent: set[str] = set()
+    for t in trades:
+        if t.get("outcome") not in ("WIN", "LOSS", "UNKNOWN"):
+            continue
+        ts_str = t.get("timestamp", "")
+        if not ts_str:
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_str)
+            if ts >= cutoff:
+                recent.add(t.get("pair", ""))
+        except ValueError:
+            pass
+    return recent
+
+
 def circuit_breaker_check() -> tuple[bool, str]:
     """
     Returns (can_trade, reason).

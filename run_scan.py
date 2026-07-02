@@ -42,7 +42,7 @@ from data.fetcher import fetch_ohlcv
 from data.indicators import add_all_indicators
 from data.session import is_session_active, active_sessions_now, minutes_to_next_session
 from data.calendar import is_news_blocked, next_news_events
-from data.trade_journal import log_trade, circuit_breaker_check
+from data.trade_journal import log_trade, circuit_breaker_check, get_recently_traded_pairs
 from strategy.trend_following import TrendFollowingStrategy, Signal
 from notifications.alerts import send_signal_email, send_trade_result_email
 from notifications.weekly_report import should_send_weekly, send_weekly_report
@@ -150,13 +150,33 @@ def run():
         # The gap makes expiries stagger so balance method works per-trade.
         placed: list[tuple[Signal, dict, float]] = []   # (signal, trade, amount)
 
-        for i, sig in enumerate(kept):
+        # Cross-run per-pair cooldown: fetch once before the loop.
+        # GitHub Actions runs are stateless — without this the same pair can
+        # fire an auto-trade every 5 minutes across independent runs.
+        recently_traded: set[str] = set()
+        if iq_client is not None and not dry_run:
+            recently_traded = get_recently_traded_pairs(cooldown_minutes=config.SIGNAL_COOLDOWN_MINUTES)
+            if recently_traded:
+                names = ", ".join(config.PAIR_DISPLAY.get(p, p) for p in recently_traded)
+                logger.info(f"Cross-run cooldown active for: {names} (trade placed < {config.SIGNAL_COOLDOWN_MINUTES} min ago)")
+
+        trades_placed = 0   # counts successful placements; used to stagger delays
+
+        for sig in kept:
             name      = config.PAIR_DISPLAY.get(sig.symbol, sig.symbol)
             iq_symbol = config.IQ_SYMBOLS.get(sig.symbol)
             can_trade = iq_client is not None and iq_symbol is not None
 
-            # Stagger placements — skip delay before first trade
-            if can_trade and i > 0:
+            # Skip auto-trade if this pair was already traded in the last cooldown window
+            if can_trade and sig.symbol in recently_traded:
+                logger.warning(
+                    f"COOLDOWN {name}: auto-trade placed < {config.SIGNAL_COOLDOWN_MINUTES} min ago "
+                    f"— sending signal email only"
+                )
+                can_trade = False
+
+            # Stagger placements — skip delay before first actual placement
+            if can_trade and trades_placed > 0:
                 logger.info(f"Waiting {TRADE_PLACEMENT_DELAY}s before next placement (staggering expiries) ...")
                 time.sleep(TRADE_PLACEMENT_DELAY)
 
@@ -205,6 +225,7 @@ def run():
                         )
                 if trade:
                     placed.append((sig, trade, amount))
+                    trades_placed += 1
                     if not dry_run:
                         send_signal_email(sig, auto_trading=True, amount=amount)
                     continue
