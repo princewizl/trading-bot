@@ -121,6 +121,14 @@ def run():
                 f"{sig.strength:.0%} | ADX={sig.adx:.1f} RSI={sig.rsi:.1f} "
                 f"MACD={sig.macd_hist:+.6f} BB={sig.bb_width*100:.3f}%"
             )
+        else:
+            # Log why the pair was rejected — essential for diagnosing quiet periods
+            failed_summary = ", ".join(sig.checks_failed[:4]) or "none logged"
+            logger.info(
+                f"NO SIGNAL {name} | ADX={sig.adx:.1f} RSI={sig.rsi:.1f} "
+                f"HTF={sig.htf_trend} passed={len(sig.checks_passed)}/10 "
+                f"| failed=[{failed_summary}]"
+            )
 
     # ── 2. Correlation filter ─────────────────────────────────────────────
     kept    = filter_correlated(candidates)
