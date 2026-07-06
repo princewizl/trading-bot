@@ -210,27 +210,6 @@ def run():
                     amount=amount,
                     duration_minutes=config.EXPIRY_MINUTES,
                 )
-                # Retry once after 90s for brief H1-boundary pauses.
-                # Skip retry only if a news event is active — the IQ Option
-                # suspension is protective in that case and the market will
-                # have already moved on the news release.
-                if trade is None:
-                    news_now, news_reason = is_news_blocked(sig.symbol)
-                    if news_now:
-                        logger.info(
-                            f"Skipping retry for {name} — news event active ({news_reason})"
-                        )
-                    else:
-                        logger.info(f"Placement rejected — waiting 90s then retrying {name} ...")
-                        time.sleep(90)
-                        iq_client.refresh_balance()
-                        amount = get_trade_amount(iq_client.balance)
-                        trade = iq_client.place_trade(
-                            symbol=iq_symbol,
-                            direction=sig.direction,
-                            amount=amount,
-                            duration_minutes=config.EXPIRY_MINUTES,
-                        )
                 if trade:
                     placed.append((sig, trade, amount))
                     trades_placed += 1
