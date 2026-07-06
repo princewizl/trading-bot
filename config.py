@@ -102,11 +102,11 @@ IQ_PASSWORD = os.getenv("IQ_PASSWORD", "")
 IQ_DEMO     = os.getenv("IQ_DEMO", "true").lower() == "true"   # true = practice/$10k virtual
 
 # yfinance symbol → IQ Option ticker (binary options only)
-# USDJPY: not available as binary options on IQ Option — signal emails only
 # EURGBP: removed — 47.8% win rate (below 58.8% break-even at 70% payout), signal emails only
 IQ_SYMBOLS = {
     "EURUSD=X": "EURUSD",
     "GBPUSD=X": "GBPUSD",
+    "USDJPY=X": "USDJPY",
     "AUDUSD=X": "AUDUSD",
     "USDCAD=X": "USDCAD",
     "GBPJPY=X": "GBPJPY",
