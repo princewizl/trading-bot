@@ -118,16 +118,45 @@ def get_recent_signal_pairs(cooldown_minutes: int = 15) -> set[str]:
     return recent
 
 
+def log_pending_trade(signal, trade_id: str, stake: float, session: str = "") -> bool:
+    """
+    Write a PENDING marker to the journal immediately when a trade is placed,
+    before waiting for its result. This prevents the next overlapping 5-minute
+    run from placing a duplicate trade on the same pair: that run calls
+    get_recently_traded_pairs(), sees the PENDING entry, and skips the pair.
+
+    Uses contract_id "PENDING_<trade_id>" so the real log_trade() call with
+    the actual contract_id is never blocked by deduplication.
+    """
+    row = _build_row(
+        signal,
+        {
+            "outcome":     "PENDING",
+            "profit":      0,
+            "balance":     0,
+            "currency":    "USD",
+            "contract_id": f"PENDING_{trade_id}",
+        },
+        stake,
+        session,
+    )
+    if GIST_ID and GIST_TOKEN:
+        existing = _gist_read()
+        if existing is not None:
+            existing.append(row)
+            return _gist_write(existing)
+    return _local_append(row)
+
+
 def get_recently_traded_pairs(cooldown_minutes: int = 15) -> set[str]:
     """
-    Return pairs that had an auto-placed trade (WIN/LOSS/UNKNOWN) within
-    the last cooldown_minutes. Excludes SIGNAL-only entries so a signal
-    email never counts as a trade for cooldown purposes.
+    Return pairs that had an auto-placed trade (WIN/LOSS/UNKNOWN/PENDING)
+    within the last cooldown_minutes. Excludes SIGNAL-only entries so a
+    signal email never counts as a trade for cooldown purposes.
 
-    Used in run_scan.py to prevent the same pair from firing a second
-    auto-trade before the first one's result has had time to play out.
-    GitHub Actions runs are stateless — without this check the same pair
-    can fire every 5 minutes indefinitely.
+    PENDING entries are written at placement time (before the result arrives)
+    so overlapping runs see the cooldown immediately — not 5+ minutes later
+    when the first run finishes and writes the real outcome.
     """
     try:
         trades = get_all_trades()
@@ -137,7 +166,7 @@ def get_recently_traded_pairs(cooldown_minutes: int = 15) -> set[str]:
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=cooldown_minutes)
     recent: set[str] = set()
     for t in trades:
-        if t.get("outcome") not in ("WIN", "LOSS", "UNKNOWN"):
+        if t.get("outcome") not in ("WIN", "LOSS", "UNKNOWN", "PENDING"):
             continue
         ts_str = t.get("timestamp", "")
         if not ts_str:

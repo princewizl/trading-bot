@@ -42,7 +42,7 @@ from data.fetcher import fetch_ohlcv
 from data.indicators import add_all_indicators
 from data.session import is_session_active, active_sessions_now, minutes_to_next_session
 from data.calendar import is_news_blocked, next_news_events
-from data.trade_journal import log_trade, circuit_breaker_check, get_recently_traded_pairs
+from data.trade_journal import log_trade, log_pending_trade, circuit_breaker_check, get_recently_traded_pairs
 from strategy.trend_following import TrendFollowingStrategy, Signal
 from notifications.alerts import send_signal_email, send_trade_result_email
 from notifications.weekly_report import should_send_weekly, send_weekly_report
@@ -214,6 +214,15 @@ def run():
                     placed.append((sig, trade, amount))
                     trades_placed += 1
                     if not dry_run:
+                        # Write PENDING to Gist immediately — the next overlapping
+                        # 5-min run reads this and won't place a duplicate trade on
+                        # the same pair before this run has logged the real outcome.
+                        log_pending_trade(
+                            sig,
+                            str(trade["trade_id"]),
+                            amount,
+                            session=session_map.get(sig.symbol, ""),
+                        )
                         send_signal_email(sig, auto_trading=True, amount=amount)
                     continue
 
