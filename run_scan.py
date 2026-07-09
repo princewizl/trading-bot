@@ -21,6 +21,7 @@ Usage:
 """
 
 import logging
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -294,7 +295,7 @@ def run():
 if __name__ == "__main__":
     try:
         run()
-        sys.exit(0)
+        os._exit(0)
     except Exception as e:
         logger.exception(f"Scan crashed: {e}")
-        sys.exit(1)
+        os._exit(1)
