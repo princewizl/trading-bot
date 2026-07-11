@@ -151,6 +151,13 @@ def run():
         if client.connect():
             iq_client    = client
             live_balance = client.balance
+            # Log open/closed status for each auto-trade pair so we can
+            # detect pairs that IQ Option doesn't list (like USDJPY, AUDUSD).
+            if client.open_symbols is not None:
+                for yf_sym, iq_ticker in config.IQ_SYMBOLS.items():
+                    pair_name = config.PAIR_DISPLAY.get(yf_sym, yf_sym)
+                    status = "OPEN" if iq_ticker in client.open_symbols else "CLOSED/UNLISTED"
+                    logger.info(f"IQ asset {pair_name} ({iq_ticker}): {status}")
         else:
             logger.warning("IQ Option unavailable — emailing signals only this scan")
 
