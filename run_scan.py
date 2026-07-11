@@ -221,10 +221,10 @@ def run():
                         log_pending_trade(
                             sig,
                             str(trade["trade_id"]),
-                            amount,
+                            trade["stake"],   # actual OTC-adjusted stake placed
                             session=session_map.get(sig.symbol, ""),
                         )
-                        send_signal_email(sig, auto_trading=True, amount=amount)
+                        send_signal_email(sig, auto_trading=True, amount=trade["stake"])
                     continue
 
             # Trade not placed → signal-only email
@@ -255,7 +255,10 @@ def run():
                     new_balance  = iq_client.refresh_balance()
                     net          = round(new_balance - pre_balance, 2)
                     outcome      = "WIN" if net > amount * 0.5 else "LOSS"
-                    profit       = round(net - amount, 2) if outcome == "WIN" else -amount
+                    # Use trade["stake"] — the actual amount IQ deducted (OTC-reduced if applicable).
+                    # Using the original `amount` here would overstate losses for OTC trades.
+                    actual_stake = trade["stake"]
+                    profit       = round(net - actual_stake, 2) if outcome == "WIN" else -actual_stake
                     logger.info(
                         f"RESULT (balance): {trade['symbol']} {trade['direction']} → {outcome} | "
                         f"Net: USD {net:+.2f} | Profit: USD {profit:+.2f} | Balance: USD {new_balance:.2f}"
@@ -263,7 +266,7 @@ def run():
                     result = {
                         "outcome":     outcome,
                         "profit":      profit,
-                        "stake":       amount,
+                        "stake":       actual_stake,
                         "payout":      new_balance - pre_balance if outcome == "WIN" else 0.0,
                         "entry_spot":  0.0,
                         "exit_spot":   0.0,
@@ -277,13 +280,14 @@ def run():
                     # check_win_v3 worked — still update pre_balance
                     pre_balance = result["balance"]
 
+                actual_stake = trade["stake"]
                 logger.info(
                     f"{'WIN' if result['outcome'] == 'WIN' else 'LOSS'}: {name} {sig.direction} | "
                     f"Profit: USD {result['profit']:+.2f} | Balance: USD {result['balance']:.2f}"
                 )
                 if not dry_run:
-                    send_trade_result_email(sig, result, amount)
-                    log_trade(sig, result, amount, session=session_map.get(sig.symbol, ""))
+                    send_trade_result_email(sig, result, actual_stake)
+                    log_trade(sig, result, actual_stake, session=session_map.get(sig.symbol, ""))
 
     finally:
         if iq_client:

@@ -154,7 +154,7 @@ class TrendFollowingStrategy:
         # ── Hard ADX gate — block ranging markets before scoring ──────
         if adx < ADX_HARD_MIN:
             logger.debug(f"SKIP {symbol}: ADX {adx:.1f} < {ADX_HARD_MIN} (ranging market — no trade)")
-            return self._no_signal(symbol, df, f"ADX {adx:.1f} below minimum {ADX_HARD_MIN} — market is ranging")
+            return self._no_signal(symbol, df, f"ADX {adx:.1f} below minimum {ADX_HARD_MIN} — market is ranging", htf_trend=htf_trend)
 
         # ── 10 BUY checks ────────────────────────────────────────────
         buy = {
@@ -203,7 +203,7 @@ class TrendFollowingStrategy:
                 continue
 
             if self._on_cooldown(symbol):
-                return self._no_signal(symbol, df, "Signal cooldown active")
+                return self._no_signal(symbol, df, "Signal cooldown active", htf_trend=htf_trend)
 
             self._last_signal[symbol] = datetime.now(timezone.utc)
             passed = [k for k, v in checks.items() if v]
@@ -221,19 +221,41 @@ class TrendFollowingStrategy:
             logger.info(f"SIGNAL [{confidence}] {symbol} {direction} strength={score:.0%} adx={adx:.1f} rsi={rsi:.1f} macd_hist={macd_hist:.6f}")
             return sig
 
-        return self._no_signal(symbol, df, f"Filters not met (buy={buy_score:.0%} sell={sell_score:.0%})")
+        # Pick the better-scoring direction and surface its actual check results
+        # so NO SIGNAL log lines show which checks failed — not "none logged".
+        if buy_score >= sell_score:
+            best_checks, best_score, direction_label = buy, buy_score, "BUY"
+        else:
+            best_checks, best_score, direction_label = sell, sell_score, "SELL"
+        passed = [k for k, v in best_checks.items() if v]
+        failed = [k for k, v in best_checks.items() if not v]
+        return self._no_signal(
+            symbol, df,
+            f"Filters not met (best={direction_label} {best_score:.0%})",
+            checks_passed=passed, checks_failed=failed, htf_trend=htf_trend,
+        )
 
     # ── helpers ──────────────────────────────────────────────────────
 
-    def _no_signal(self, symbol: str, df: pd.DataFrame, reason: str) -> Signal:
+    def _no_signal(
+        self,
+        symbol: str,
+        df: pd.DataFrame,
+        reason: str,
+        checks_passed: list | None = None,
+        checks_failed: list | None = None,
+        htf_trend: str = "NEUTRAL",
+    ) -> Signal:
         row = df.iloc[-1] if len(df) > 0 else pd.Series(dtype=float)
         g = lambda k, d=0.0: row.get(k, d) if hasattr(row, "get") else d
         return Signal(
             symbol=symbol, direction="NONE", strength=0.0,
-            confidence_label="NO SIGNAL", checks_passed=[], checks_failed=[],
+            confidence_label="NO SIGNAL",
+            checks_passed=checks_passed if checks_passed is not None else [],
+            checks_failed=checks_failed if checks_failed is not None else [],
             price=g("close"), adx=g("adx"), rsi=g("rsi", 50.0),
             ema_fast=0.0, ema_slow=0.0, atr=g("atr"),
-            htf_trend="NEUTRAL", candlestick_pattern="",
+            htf_trend=htf_trend, candlestick_pattern="",
             macd_hist=g("macd_hist"), bb_width=g("bb_width"),
             volume_ok=False, advice=reason,
         )
