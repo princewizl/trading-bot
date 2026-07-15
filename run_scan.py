@@ -114,6 +114,15 @@ def run():
         sig   = strategy.analyze(symbol, df_m5, htf_df=df_h1)
 
         if sig.is_actionable:
+            # Per-pair direction restriction (data-driven, see config.PAIR_DIRECTION_RESTRICT)
+            allowed_dir = config.PAIR_DIRECTION_RESTRICT.get(symbol)
+            if allowed_dir and sig.direction != allowed_dir:
+                logger.info(
+                    f"DIRECTION BLOCK {name} {sig.direction}: only {allowed_dir} allowed "
+                    f"(historical {sig.direction} WR too low for this pair)"
+                )
+                continue
+
             sig.upcoming_news = next_news_events(symbol, look_ahead_hours=2)
             candidates.append(sig)
             session_map[symbol] = session_info

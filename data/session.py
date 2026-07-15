@@ -31,6 +31,16 @@ SESSIONS = {
     "SYDNEY": (dtime(21, 15), dtime(5, 45)),    # wraps midnight
 }
 
+# Global no-trade windows (UTC). Pairs in session but in these windows still get
+# signal emails — we just skip auto-placement and log the reason.
+# Data-driven from 113-trade analysis (Jun 29 – Jul 15):
+#   07:00-08:15 → London open chaos:      12 trades, 41.7% WR, -$1,354
+#   13:00-14:00 → London/NY handover:     25 trades, 48.0% WR,   -$712
+BLACKOUT_WINDOWS: list[tuple[dtime, dtime]] = [
+    (dtime(7, 0),  dtime(8, 15)),   # London open volatility
+    (dtime(13, 0), dtime(14, 0)),   # London/NY overlap handover
+]
+
 # Optimal sessions per pair. A signal must fall in at least one of these.
 PAIR_SESSIONS: dict[str, list[str]] = {
     "EURUSD=X": ["LONDON", "NEW_YORK"],
@@ -51,6 +61,12 @@ def is_session_active(symbol: str) -> tuple[bool, str]:
     for this pair. Returns (False, reason) if outside all optimal sessions.
     """
     now_utc = datetime.now(timezone.utc).time().replace(second=0, microsecond=0)
+
+    # Global blackout windows override session membership
+    for bstart, bend in BLACKOUT_WINDOWS:
+        if _time_in_range(now_utc, bstart, bend):
+            return False, f"blackout {bstart.strftime('%H:%M')}–{bend.strftime('%H:%M')} UTC (high-volatility window)"
+
     allowed = PAIR_SESSIONS.get(symbol, list(SESSIONS.keys()))
 
     for session_name in allowed:

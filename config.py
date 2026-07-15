@@ -89,6 +89,13 @@ CORRELATION_GROUPS = [
 # Minimum fraction of checks that must pass to emit a signal
 MIN_SIGNAL_STRENGTH = 0.75  # 75% = at least 8 of 10 checks must pass
 
+# Per-pair direction restrictions — only the listed direction(s) will trade.
+# Data-driven: GBP/JPY BUY has 50% WR on 20 trades (-$854); SELL has 71.4% WR.
+# GBP/JPY trending DOWN during London session is the primary regime for this pair.
+PAIR_DIRECTION_RESTRICT: dict[str, str] = {
+    "GBPJPY=X": "SELL",   # BUY blocked: 50% WR = coin flip; SELL: 71% WR
+}
+
 # Minimum candles between two signals on the same pair
 SIGNAL_COOLDOWN_MINUTES = 15
 
