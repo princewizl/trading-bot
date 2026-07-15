@@ -12,6 +12,8 @@ TRADING_PAIRS = [
     "USDCAD=X",
     "EURGBP=X",
     "GBPJPY=X",
+    "EURJPY=X",
+    "EURCHF=X",
 ]
 
 # Human-readable names for emails
@@ -23,6 +25,8 @@ PAIR_DISPLAY = {
     "USDCAD=X": "USD/CAD",
     "EURGBP=X": "EUR/GBP",
     "GBPJPY=X": "GBP/JPY",
+    "EURJPY=X": "EUR/JPY",
+    "EURCHF=X": "EUR/CHF",
 }
 
 # ─── Timeframes ─────────────────────────────────────────────────────────────
@@ -81,9 +85,10 @@ MACD_SIGNAL = 9
 # When two pairs in the same group fire the same direction in one scan,
 # only the highest-strength signal is sent — the rest are redundant.
 CORRELATION_GROUPS = [
-    ["EURUSD=X", "GBPUSD=X", "AUDUSD=X"],   # all move against USD together
-    ["EURUSD=X", "EURGBP=X"],                # EUR base pairs
-    ["GBPUSD=X", "EURGBP=X", "GBPJPY=X"],   # GBP base pairs
+    ["EURUSD=X", "GBPUSD=X", "AUDUSD=X"],                       # USD quote pairs
+    ["EURUSD=X", "EURGBP=X", "EURJPY=X", "EURCHF=X"],           # EUR base pairs
+    ["GBPUSD=X", "EURGBP=X", "GBPJPY=X"],                       # GBP base pairs
+    ["GBPJPY=X", "EURJPY=X", "USDJPY=X"],                       # JPY quote pairs
 ]
 
 # Minimum fraction of checks that must pass to emit a signal
@@ -114,11 +119,14 @@ IQ_DEMO     = os.getenv("IQ_DEMO", "true").lower() == "true"   # true = practice
 # USDJPY: IQ Option does not list it as a binary/turbo asset — signal emails only
 # AUDUSD: AUDUSD-OTC ticker does not exist in IQ Option asset list (KeyError) — signal emails only
 # EURGBP: removed — 47.8% win rate (below 58.8% break-even at 70% payout), signal emails only
+# EURJPY / EURCHF: newly added — IQ asset status logged at connect to confirm support
 IQ_SYMBOLS = {
     "EURUSD=X": "EURUSD",
     "GBPUSD=X": "GBPUSD",
     "USDCAD=X": "USDCAD",
     "GBPJPY=X": "GBPJPY",
+    "EURJPY=X": "EURJPY",
+    "EURCHF=X": "EURCHF",
 }
 
 # Deriv price feed (still used for real-time OHLCV data — no account needed)
@@ -131,6 +139,8 @@ DERIV_SYMBOLS = {
     "USDCAD=X": "frxUSDCAD",
     "EURGBP=X": "frxEURGBP",
     "GBPJPY=X": "frxGBPJPY",
+    "EURJPY=X": "frxEURJPY",
+    "EURCHF=X": "frxEURCHF",
 }
 
 # ─── Email Settings ─────────────────────────────────────────────────────────

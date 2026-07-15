@@ -49,7 +49,9 @@ PAIR_SESSIONS: dict[str, list[str]] = {
     "AUDUSD=X": ["SYDNEY", "TOKYO", "NEW_YORK"],
     "USDCAD=X": ["NEW_YORK"],
     "EURGBP=X": ["LONDON"],
-    "GBPJPY=X": ["LONDON"],         # most liquid and trending during London only
+    "GBPJPY=X": ["LONDON"],
+    "EURJPY=X": ["LONDON", "TOKYO"],  # EUR volatility + JPY liquidity in both sessions
+    "EURCHF=X": ["LONDON"],           # CHF most active during European hours
 }
 
 
