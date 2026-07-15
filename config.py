@@ -45,7 +45,9 @@ HTF_EMA_SLOW = 30
 
 ADX_PERIOD    = 14
 ADX_HARD_MIN  = 22         # Hard floor — signal blocked entirely below this, regardless of other checks
-ADX_THRESHOLD = 28         # Soft check inside the 10-confluence scoring (one of 10 checks)
+ADX_THRESHOLD = 33         # Soft check inside the 10-confluence scoring (one of 10 checks)
+                           # 28→33: ADX 28-33 now fails this check (needs 8/9 others to pass)
+                           # Data: ADX 28-30 had 35.7% WR on 14 trades; 30-33 had 53.8% on 26
 
 RSI_PERIOD       = 14
 RSI_OVERBOUGHT   = 72
