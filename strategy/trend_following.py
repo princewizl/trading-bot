@@ -27,6 +27,7 @@ from config import (
     EMA_FAST, EMA_SLOW, EMA_TREND,
     HTF_EMA_FAST, HTF_EMA_SLOW,
     ADX_HARD_MIN, ADX_THRESHOLD,
+    RSI_OVERBOUGHT, RSI_OVERSOLD,
     RSI_BULL_MIN, RSI_BULL_MAX, RSI_BEAR_MIN, RSI_BEAR_MAX,
     BB_SQUEEZE_THRESHOLD,
     MIN_SIGNAL_STRENGTH, SIGNAL_COOLDOWN_MINUTES,
@@ -200,6 +201,17 @@ class TrendFollowingStrategy:
                 continue
             if direction == "SELL" and htf_trend == "UP":
                 logger.info(f"BLOCK {symbol} SELL: H1 trend is UP — counter-trend trade blocked")
+                continue
+
+            # RSI hard gate — block trading into exhausted moves at RSI extremes.
+            # Overbought BUY and oversold SELL can still score 8/10 (RSI soft check
+            # fails but 8 others compensate), but the move is already extended and
+            # reversal risk is high. Evidence: RSI=87 BUY -$164, RSI=86 BUY -$158.
+            if direction == "BUY" and rsi >= RSI_OVERBOUGHT:
+                logger.info(f"RSI GATE {symbol}: BUY blocked — RSI {rsi:.1f} >= {RSI_OVERBOUGHT} (overbought, reversal risk)")
+                continue
+            if direction == "SELL" and rsi <= RSI_OVERSOLD:
+                logger.info(f"RSI GATE {symbol}: SELL blocked — RSI {rsi:.1f} <= {RSI_OVERSOLD} (oversold, reversal risk)")
                 continue
 
             if self._on_cooldown(symbol):
