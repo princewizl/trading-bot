@@ -262,19 +262,36 @@ def run():
                 # Wait for this specific trade's expiry
                 iq_client._wait_until(trade["expiry_epoch"], label=f"{trade['symbol']} {trade['trade_id']}")
 
-                # Try check_win_v3 once (fast path, rarely works but costs only 15s)
-                result = iq_client.check_result(trade, max_retries=1)
+                # Try check_win_v3 first (authoritative per-trade result).
+                # Two attempts max — going longer risks the next trade settling
+                # (60s later) and contaminating the balance fallback below.
+                result = iq_client.check_result(trade, max_retries=2)
 
                 if result is None:
-                    # Balance method — reliable because this is the only
-                    # trade that has just expired (others expire 60s later)
+                    # Balance method — this trade is the only one that just
+                    # expired (others expire 60s later), so a clean read is:
+                    #   WIN  → balance credited stake + payout ≈ 1.6-1.9 × stake
+                    #   LOSS → balance unchanged (stake was deducted at placement)
+                    # Anything in between means another trade's settlement leaked
+                    # into the window. The old midpoint rule (net > 0.5 × stake)
+                    # silently mislabeled 13 such collisions as WINs — record
+                    # UNKNOWN instead so stats stay honest.
                     new_balance  = iq_client.refresh_balance()
                     net          = round(new_balance - pre_balance, 2)
-                    outcome      = "WIN" if net > amount * 0.5 else "LOSS"
                     # Use trade["stake"] — the actual amount IQ deducted (OTC-reduced if applicable).
                     # Using the original `amount` here would overstate losses for OTC trades.
                     actual_stake = trade["stake"]
-                    profit       = round(net - actual_stake, 2) if outcome == "WIN" else -actual_stake
+                    if net >= actual_stake * 1.5:
+                        outcome, profit = "WIN", round(net - actual_stake, 2)
+                    elif net <= actual_stake * 0.2:
+                        outcome, profit = "LOSS", -actual_stake
+                    else:
+                        outcome, profit = "UNKNOWN", round(net - actual_stake, 2)
+                        logger.warning(
+                            f"Ambiguous balance read for {trade['symbol']}: net USD {net:+.2f} "
+                            f"vs stake USD {actual_stake:.2f} — another trade likely settled "
+                            f"in the window. Recording UNKNOWN."
+                        )
                     logger.info(
                         f"RESULT (balance): {trade['symbol']} {trade['direction']} → {outcome} | "
                         f"Net: USD {net:+.2f} | Profit: USD {profit:+.2f} | Balance: USD {new_balance:.2f}"
@@ -298,7 +315,7 @@ def run():
 
                 actual_stake = trade["stake"]
                 logger.info(
-                    f"{'WIN' if result['outcome'] == 'WIN' else 'LOSS'}: {name} {sig.direction} | "
+                    f"{result['outcome']}: {name} {sig.direction} | "
                     f"Profit: USD {result['profit']:+.2f} | Balance: USD {result['balance']:.2f}"
                 )
                 if not dry_run:

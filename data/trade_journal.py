@@ -304,6 +304,10 @@ def _gist_append(row: dict) -> bool:
     if cid and any(str(r.get("contract_id", "")) == cid for r in existing):
         logger.warning(f"Duplicate contract_id {cid} — skipping journal write")
         return True
+    # The settled row supersedes its own PENDING marker — drop the marker so
+    # the journal doesn't accumulate one stale duplicate row per trade.
+    if cid:
+        existing = [r for r in existing if str(r.get("contract_id", "")) != f"PENDING_{cid}"]
     existing.append(row)
     return _gist_write(existing)
 

@@ -314,7 +314,8 @@ def _result_subject(signal, result: dict) -> str:
     currency = result["currency"]
     name     = PAIR_DISPLAY.get(signal.symbol, signal.symbol)
     sign     = "+" if profit >= 0 else ""
-    return f"[{'WIN ✅' if outcome == 'WIN' else 'LOSS ❌'}] {name} {signal.direction} | {currency} {sign}{profit:.2f}"
+    tag      = {"WIN": "WIN ✅", "LOSS": "LOSS ❌"}.get(outcome, f"{outcome} ⚠️")
+    return f"[{tag}] {name} {signal.direction} | {currency} {sign}{profit:.2f}"
 
 
 def _build_result_html(signal, result: dict, stake: float) -> str:
