@@ -33,12 +33,15 @@ SESSIONS = {
 
 # Global no-trade windows (UTC). Pairs in session but in these windows still get
 # signal emails — we just skip auto-placement and log the reason.
-# Data-driven from 113-trade analysis (Jun 29 – Jul 15):
-#   07:00-08:15 → London open chaos:      12 trades, 41.7% WR, -$1,354
-#   13:00-14:00 → London/NY handover:     25 trades, 48.0% WR,   -$712
+# Data-driven from 140-trade analysis (Jun 29 – Jul 20, profit-truth WR):
+#   07:00-08:15 → London open chaos:      12 trades, 16.7% WR, -$1,354
+#   13:00-14:00 → London/NY handover:     25 trades, 40.0% WR,   -$712
+#   15:00-17:00 → London close / NY chop: 15 trades, 26.7% WR, -$1,313
+#                 (consistent both before AND after the Jul 15 tuning batch)
 BLACKOUT_WINDOWS: list[tuple[dtime, dtime]] = [
     (dtime(7, 0),  dtime(8, 15)),   # London open volatility
     (dtime(13, 0), dtime(14, 0)),   # London/NY overlap handover
+    (dtime(15, 0), dtime(17, 0)),   # London close + NY afternoon chop
 ]
 
 # Optimal sessions per pair. A signal must fall in at least one of these.

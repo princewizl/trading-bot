@@ -48,10 +48,15 @@ HTF_EMA_FAST = 10
 HTF_EMA_SLOW = 30
 
 ADX_PERIOD    = 14
-ADX_HARD_MIN  = 22         # Hard floor — signal blocked entirely below this, regardless of other checks
+ADX_HARD_MIN  = 30         # Hard floor — signal blocked entirely below this, regardless of other checks
+                           # 22→30: the soft ADX_THRESHOLD raise didn't stop the bleed (ADX<33
+                           # trades went 1W/5L after it). Profit-truth data on 140 trades:
+                           # ADX 25-30 = 41.2% WR (-$1,097 on 34t) — worst high-volume bucket.
+ADX_HARD_MAX  = 50         # Hard ceiling — ADX ≥ 50 means the move is climaxing/exhausted.
+                           # Data: 8 trades at ADX ≥ 50 went 1W/7L (-$1,040). Same physics as
+                           # the RSI gate: entering an already-extended move invites the snapback.
 ADX_THRESHOLD = 33         # Soft check inside the 10-confluence scoring (one of 10 checks)
-                           # 28→33: ADX 28-33 now fails this check (needs 8/9 others to pass)
-                           # Data: ADX 28-30 had 35.7% WR on 14 trades; 30-33 had 53.8% on 26
+                           # ADX 33-40 is the sweet spot: 60.7% WR, +$1,333 on 28 trades
 
 RSI_PERIOD       = 14
 RSI_OVERBOUGHT   = 72
@@ -99,6 +104,8 @@ MIN_SIGNAL_STRENGTH = 0.75  # 75% = at least 8 of 10 checks must pass
 # GBP/JPY trending DOWN during London session is the primary regime for this pair.
 PAIR_DIRECTION_RESTRICT: dict[str, str] = {
     "GBPJPY=X": "SELL",   # BUY blocked: 50% WR = coin flip; SELL: 71% WR
+    "GBPUSD=X": "SELL",   # BUY blocked: 37.5% WR on 32 trades, -$1,409 (profit-truth) —
+                          # nearly the entire all-time drawdown. SELL: 66.7% WR on 6 trades.
 }
 
 # Minimum candles between two signals on the same pair
