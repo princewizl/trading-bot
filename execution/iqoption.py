@@ -297,7 +297,9 @@ class IQClient:
 
         t = threading.Thread(target=_fetch, daemon=True)
         t.start()
-        t.join(timeout=10)
+        # 25s: get_all_open_time pulls the full asset catalog, which regularly
+        # exceeded 10s from GitHub Actions runners ("Open assets: ?" in logs).
+        t.join(timeout=25)
         return result[0]
 
     def _buy(self, ticker: str, action: str, amount: float, duration: int):
