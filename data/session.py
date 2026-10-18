@@ -41,7 +41,7 @@ SESSIONS = {
 BLACKOUT_WINDOWS: list[tuple[dtime, dtime]] = [
     (dtime(7, 0),  dtime(8, 15)),   # London open volatility
     (dtime(13, 0), dtime(14, 0)),   # London/NY overlap handover
-    (dtime(15, 0), dtime(17, 0)),   # London close + NY afternoon chop
+    # 15:00-17:00 removed Oct 18 with the rest of the Jul 20 batch (see config.py ADX note)
 ]
 
 # Optimal sessions per pair. A signal must fall in at least one of these.
@@ -65,26 +65,41 @@ def is_session_active(symbol: str) -> tuple[bool, str]:
     Returns (True, session_name) if we are inside an optimal trading window
     for this pair. Returns (False, reason) if outside all optimal sessions.
     """
-    now_utc = datetime.now(timezone.utc).time().replace(second=0, microsecond=0)
-
     # Global blackout windows override session membership
-    for bstart, bend in BLACKOUT_WINDOWS:
-        if _time_in_range(now_utc, bstart, bend):
-            return False, f"blackout {bstart.strftime('%H:%M')}–{bend.strftime('%H:%M')} UTC (high-volatility window)"
+    blackout = blackout_now()
+    if blackout:
+        return False, f"blackout {blackout} UTC (high-volatility window)"
 
-    allowed = PAIR_SESSIONS.get(symbol, list(SESSIONS.keys()))
-
-    for session_name in allowed:
-        window = SESSIONS.get(session_name)
-        if window and _time_in_range(now_utc, window[0], window[1]):
-            return True, session_name
+    session_name = pair_session_now(symbol)
+    if session_name:
+        return True, session_name
 
     # Build readable reason
+    allowed = PAIR_SESSIONS.get(symbol, list(SESSIONS.keys()))
     windows = [
         f"{SESSIONS[s][0].strftime('%H:%M')}–{SESSIONS[s][1].strftime('%H:%M')} UTC ({s})"
         for s in allowed if s in SESSIONS
     ]
     return False, f"Outside optimal session(s): {', '.join(windows)}"
+
+
+def blackout_now() -> str:
+    """Return the active blackout window as 'HH:MM–HH:MM', or '' if none."""
+    now_utc = datetime.now(timezone.utc).time().replace(second=0, microsecond=0)
+    for bstart, bend in BLACKOUT_WINDOWS:
+        if _time_in_range(now_utc, bstart, bend):
+            return f"{bstart.strftime('%H:%M')}–{bend.strftime('%H:%M')}"
+    return ""
+
+
+def pair_session_now(symbol: str) -> str:
+    """Return the pair's optimal session that is open now (ignoring blackouts), or ''."""
+    now_utc = datetime.now(timezone.utc).time().replace(second=0, microsecond=0)
+    for session_name in PAIR_SESSIONS.get(symbol, list(SESSIONS.keys())):
+        window = SESSIONS.get(session_name)
+        if window and _time_in_range(now_utc, window[0], window[1]):
+            return session_name
+    return ""
 
 
 def active_sessions_now() -> list[str]:

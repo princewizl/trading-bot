@@ -27,7 +27,7 @@ from config import (
     EMA_FAST, EMA_SLOW, EMA_TREND,
     HTF_EMA_FAST, HTF_EMA_SLOW,
     ADX_HARD_MIN, ADX_HARD_MAX, ADX_THRESHOLD,
-    RSI_OVERBOUGHT, RSI_OVERSOLD,
+    RSI_OVERBOUGHT, RSI_OVERSOLD, RSI_HARD_GATE,
     RSI_BULL_MIN, RSI_BULL_MAX, RSI_BEAR_MIN, RSI_BEAR_MAX,
     BB_SQUEEZE_THRESHOLD,
     MIN_SIGNAL_STRENGTH, SIGNAL_COOLDOWN_MINUTES,
@@ -121,72 +121,20 @@ class TrendFollowingStrategy:
         if len(df) < EMA_TREND + 10:
             return self._no_signal(symbol, df, "Not enough data")
 
-        row  = df.iloc[-1]
-        prev = df.iloc[-2]
-
-        price     = row["close"]
-        ema_fast  = row[f"ema_{EMA_FAST}"]
-        ema_slow  = row[f"ema_{EMA_SLOW}"]
-        ema_trend = row[f"ema_{EMA_TREND}"]
-        prev_fast = prev[f"ema_{EMA_FAST}"]
-        prev_slow = prev[f"ema_{EMA_SLOW}"]
-        adx       = row["adx"]
-        plus_di   = row["plus_di"]
-        minus_di  = row["minus_di"]
-        rsi       = row["rsi"]
-        atr       = row["atr"]
-        macd_hist      = row["macd_hist"]
-        prev_macd_hist = prev["macd_hist"]
-        bb_width       = row["bb_width"]
-        bb_middle      = row["bb_middle"]
-        bb_upper       = row["bb_upper"]
-        bb_lower       = row["bb_lower"]
-
-        # Was the market in a squeeze 1–5 candles ago?
-        lookback = min(5, len(df) - 1)
-        recent_squeeze = df["bb_squeeze"].iloc[-lookback:-1].any()
-
-        vol_ma    = df["volume"].rolling(20).mean().iloc[-1]
-        volume_ok = (vol_ma > 0) and (row["volume"] >= vol_ma * 1.1)
-
-        pattern   = detect_pattern(df)
-        htf_trend = get_htf_trend(htf_df)
+        v = self._evaluate(df, htf_df)
+        price, ema_fast, ema_slow = v["price"], v["ema_fast"], v["ema_slow"]
+        adx, rsi, atr, macd_hist  = v["adx"], v["rsi"], v["atr"], v["macd_hist"]
+        bb_width, volume_ok       = v["bb_width"], v["volume_ok"]
+        pattern, htf_trend        = v["pattern"], v["htf_trend"]
+        buy, sell                 = v["buy"], v["sell"]
 
         # ── Hard ADX gates — block ranging AND exhausted markets before scoring ──
         if adx < ADX_HARD_MIN:
             logger.debug(f"SKIP {symbol}: ADX {adx:.1f} < {ADX_HARD_MIN} (ranging market — no trade)")
             return self._no_signal(symbol, df, f"ADX {adx:.1f} below minimum {ADX_HARD_MIN} — market is ranging", htf_trend=htf_trend)
-        if adx >= ADX_HARD_MAX:
+        if ADX_HARD_MAX is not None and adx >= ADX_HARD_MAX:
             logger.info(f"ADX GATE {symbol}: blocked — ADX {adx:.1f} >= {ADX_HARD_MAX} (trend climax, snapback risk)")
             return self._no_signal(symbol, df, f"ADX {adx:.1f} above maximum {ADX_HARD_MAX} — trend is climaxing, reversal risk", htf_trend=htf_trend)
-
-        # ── 10 BUY checks ────────────────────────────────────────────
-        buy = {
-            "H1 trend aligned UP":                  htf_trend == "UP",
-            "Price above EMA 50 (macro uptrend)":   price > ema_trend,
-            "EMA 8 crossed above EMA 21 (trigger)": (ema_fast > ema_slow) and (prev_fast <= prev_slow),
-            "EMA 8 above EMA 21 (momentum)":        ema_fast > ema_slow,
-            f"ADX above {ADX_THRESHOLD} (strong trend)":          adx >= ADX_THRESHOLD,
-            "+DI above -DI (bullish pressure)":     plus_di > minus_di,
-            "RSI in bullish zone (42–68)":          RSI_BULL_MIN <= rsi <= RSI_BULL_MAX,
-            "Bullish candle pattern":               pattern in ("Bullish Engulfing", "Hammer", "3 Bullish Candles"),
-            "MACD histogram positive and rising":   macd_hist > 0 and macd_hist > prev_macd_hist,
-            "BB breakout above middle after squeeze": price > bb_middle and (recent_squeeze or bb_width > df["bb_width"].iloc[-10:-1].mean()),
-        }
-
-        # ── 10 SELL checks ───────────────────────────────────────────
-        sell = {
-            "H1 trend aligned DOWN":                  htf_trend == "DOWN",
-            "Price below EMA 50 (macro downtrend)":   price < ema_trend,
-            "EMA 8 crossed below EMA 21 (trigger)":   (ema_fast < ema_slow) and (prev_fast >= prev_slow),
-            "EMA 8 below EMA 21 (momentum)":          ema_fast < ema_slow,
-            f"ADX above {ADX_THRESHOLD} (strong trend)":             adx >= ADX_THRESHOLD,
-            "-DI above +DI (bearish pressure)":        minus_di > plus_di,
-            "RSI in bearish zone (32–58)":             RSI_BEAR_MIN <= rsi <= RSI_BEAR_MAX,
-            "Bearish candle pattern":                  pattern in ("Bearish Engulfing", "Shooting Star", "3 Bearish Candles"),
-            "MACD histogram negative and falling":     macd_hist < 0 and macd_hist < prev_macd_hist,
-            "BB breakout below middle after squeeze":  price < bb_middle and (recent_squeeze or bb_width > df["bb_width"].iloc[-10:-1].mean()),
-        }
 
         buy_score  = sum(buy.values())  / len(buy)
         sell_score = sum(sell.values()) / len(sell)
@@ -206,14 +154,11 @@ class TrendFollowingStrategy:
                 logger.info(f"BLOCK {symbol} SELL: H1 trend is UP — counter-trend trade blocked")
                 continue
 
-            # RSI hard gate — block trading into exhausted moves at RSI extremes.
-            # Overbought BUY and oversold SELL can still score 8/10 (RSI soft check
-            # fails but 8 others compensate), but the move is already extended and
-            # reversal risk is high. Evidence: RSI=87 BUY -$164, RSI=86 BUY -$158.
-            if direction == "BUY" and rsi >= RSI_OVERBOUGHT:
+            # RSI hard gate (config.RSI_HARD_GATE) — block trading into exhausted moves at RSI extremes.
+            if RSI_HARD_GATE and direction == "BUY" and rsi >= RSI_OVERBOUGHT:
                 logger.info(f"RSI GATE {symbol}: BUY blocked — RSI {rsi:.1f} >= {RSI_OVERBOUGHT} (overbought, reversal risk)")
                 continue
-            if direction == "SELL" and rsi <= RSI_OVERSOLD:
+            if RSI_HARD_GATE and direction == "SELL" and rsi <= RSI_OVERSOLD:
                 logger.info(f"RSI GATE {symbol}: SELL blocked — RSI {rsi:.1f} <= {RSI_OVERSOLD} (oversold, reversal risk)")
                 continue
 
@@ -249,6 +194,95 @@ class TrendFollowingStrategy:
             f"Filters not met (best={direction_label} {best_score:.0%})",
             checks_passed=passed, checks_failed=failed, htf_trend=htf_trend,
         )
+
+    def features(self, df: pd.DataFrame, htf_df: pd.DataFrame | None = None) -> dict | None:
+        """
+        Ungated view of the current setup for the shadow log: the better-scoring
+        direction, its 10 check results, and the raw indicator values. No hard
+        gates and no cooldown side effects — gates are replayed later from these
+        values by shadow_report.py.
+        """
+        if len(df) < EMA_TREND + 10:
+            return None
+        v = self._evaluate(df, htf_df)
+        buy_n, sell_n = int(sum(v["buy"].values())), int(sum(v["sell"].values()))
+        direction = "BUY" if buy_n >= sell_n else "SELL"
+        checks = v["buy"] if direction == "BUY" else v["sell"]
+        return {
+            "direction": direction,
+            "num_passed": max(buy_n, sell_n),
+            "checks": "".join("1" if bool(ok) else "0" for ok in checks.values()),
+            **{k: v[k] for k in ("price", "adx", "plus_di", "minus_di", "rsi", "atr",
+                                 "macd_hist", "bb_width", "pattern", "htf_trend")},
+        }
+
+    def _evaluate(self, df: pd.DataFrame, htf_df: pd.DataFrame | None) -> dict:
+        """Indicator values + the 10 BUY and 10 SELL check results for the latest candle."""
+        row  = df.iloc[-1]
+        prev = df.iloc[-2]
+
+        price     = row["close"]
+        ema_fast  = row[f"ema_{EMA_FAST}"]
+        ema_slow  = row[f"ema_{EMA_SLOW}"]
+        ema_trend = row[f"ema_{EMA_TREND}"]
+        prev_fast = prev[f"ema_{EMA_FAST}"]
+        prev_slow = prev[f"ema_{EMA_SLOW}"]
+        adx       = row["adx"]
+        plus_di   = row["plus_di"]
+        minus_di  = row["minus_di"]
+        rsi       = row["rsi"]
+        atr       = row["atr"]
+        macd_hist      = row["macd_hist"]
+        prev_macd_hist = prev["macd_hist"]
+        bb_width       = row["bb_width"]
+        bb_middle      = row["bb_middle"]
+        bb_upper       = row["bb_upper"]
+        bb_lower       = row["bb_lower"]
+
+        # Was the market in a squeeze 1–5 candles ago?
+        lookback = min(5, len(df) - 1)
+        recent_squeeze = df["bb_squeeze"].iloc[-lookback:-1].any()
+
+        vol_ma    = df["volume"].rolling(20).mean().iloc[-1]
+        volume_ok = (vol_ma > 0) and (row["volume"] >= vol_ma * 1.1)
+
+        pattern   = detect_pattern(df)
+        htf_trend = get_htf_trend(htf_df)
+
+        # ── 10 BUY checks ────────────────────────────────────────────
+        buy = {
+            "H1 trend aligned UP":                  htf_trend == "UP",
+            "Price above EMA 50 (macro uptrend)":   price > ema_trend,
+            "EMA 8 crossed above EMA 21 (trigger)": (ema_fast > ema_slow) and (prev_fast <= prev_slow),
+            "EMA 8 above EMA 21 (momentum)":        ema_fast > ema_slow,
+            f"ADX above {ADX_THRESHOLD} (strong trend)":          adx >= ADX_THRESHOLD,
+            "+DI above -DI (bullish pressure)":     plus_di > minus_di,
+            "RSI in bullish zone (42–68)":          RSI_BULL_MIN <= rsi <= RSI_BULL_MAX,
+            "Bullish candle pattern":               pattern in ("Bullish Engulfing", "Hammer", "3 Bullish Candles"),
+            "MACD histogram positive and rising":   macd_hist > 0 and macd_hist > prev_macd_hist,
+            "BB breakout above middle after squeeze": price > bb_middle and (recent_squeeze or bb_width > df["bb_width"].iloc[-10:-1].mean()),
+        }
+
+        # ── 10 SELL checks ───────────────────────────────────────────
+        sell = {
+            "H1 trend aligned DOWN":                  htf_trend == "DOWN",
+            "Price below EMA 50 (macro downtrend)":   price < ema_trend,
+            "EMA 8 crossed below EMA 21 (trigger)":   (ema_fast < ema_slow) and (prev_fast >= prev_slow),
+            "EMA 8 below EMA 21 (momentum)":          ema_fast < ema_slow,
+            f"ADX above {ADX_THRESHOLD} (strong trend)":             adx >= ADX_THRESHOLD,
+            "-DI above +DI (bearish pressure)":        minus_di > plus_di,
+            "RSI in bearish zone (32–58)":             RSI_BEAR_MIN <= rsi <= RSI_BEAR_MAX,
+            "Bearish candle pattern":                  pattern in ("Bearish Engulfing", "Shooting Star", "3 Bearish Candles"),
+            "MACD histogram negative and falling":     macd_hist < 0 and macd_hist < prev_macd_hist,
+            "BB breakout below middle after squeeze":  price < bb_middle and (recent_squeeze or bb_width > df["bb_width"].iloc[-10:-1].mean()),
+        }
+
+        return {
+            "price": price, "ema_fast": ema_fast, "ema_slow": ema_slow,
+            "adx": adx, "plus_di": plus_di, "minus_di": minus_di, "rsi": rsi, "atr": atr,
+            "macd_hist": macd_hist, "bb_width": bb_width, "volume_ok": volume_ok,
+            "pattern": pattern, "htf_trend": htf_trend, "buy": buy, "sell": sell,
+        }
 
     # ── helpers ──────────────────────────────────────────────────────
 

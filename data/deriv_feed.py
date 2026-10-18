@@ -7,8 +7,10 @@ This replaces OANDA as the primary real-time data source.
 Same prices the bot trades on → no slippage from data/execution price mismatch.
 """
 
+import itertools
 import json
 import logging
+import threading
 import time
 
 import pandas as pd
@@ -18,7 +20,14 @@ import config
 
 logger = logging.getLogger(__name__)
 
-_WS_URL = "wss://ws.binaryws.com/websockets/v3?app_id={app_id}"
+# Public market-data socket of Deriv's current API (no auth needed for
+# ticks_history). The legacy hosts (ws.binaryws.com / ws.derivws.com) started
+# rejecting every handshake with HTTP 520, which silently pushed all fetches onto
+# Twelve Data / delayed yfinance. Legacy is kept only as a last attempt.
+_WS_URLS = [
+    "wss://api.derivws.com/trading/v1/options/ws/public?app_id={app_id}",
+    "wss://ws.derivws.com/websockets/v3?app_id={app_id}",
+]
 
 _GRANULARITY = {
     "1m":  60,
@@ -29,6 +38,12 @@ _GRANULARITY = {
     "4h":  14400,
     "1d":  86400,
 }
+
+# One socket reused across calls (and across scans in the long-running service).
+# Opening a fresh connection per fetch — 18+ per scan — gets throttled.
+_lock   = threading.Lock()
+_ws     = None
+_req_id = itertools.count(1)
 
 
 def fetch_ohlcv(symbol: str, interval: str = "5m", period: str = "5d") -> pd.DataFrame | None:
@@ -52,48 +67,117 @@ def fetch_ohlcv(symbol: str, interval: str = "5m", period: str = "5d") -> pd.Dat
         return None
 
     count = _period_to_count(period, interval)
+    resp = _request({
+        "ticks_history": deriv_symbol,
+        "end":           "latest",
+        "count":         count,
+        "style":         "candles",
+        "granularity":   granularity,
+    })
+    if resp is None:
+        logger.error(f"Deriv feed unreachable for {symbol}")
+        return None
+    if "error" in resp:
+        logger.error(f"Deriv feed error for {symbol}: {resp['error']['message']}")
+        return None
+    return _to_dataframe(resp.get("candles", []))
 
-    try:
-        url = _WS_URL.format(app_id=config.DERIV_APP_ID)
-        ws  = websocket.create_connection(url, timeout=20)
+
+def fetch_batch(items: list[tuple[str, str, str]], timeout: float = 20) -> dict[tuple, pd.DataFrame]:
+    """
+    Fetch many (symbol, interval, period) series in one round trip: every
+    request goes out on the shared socket before any reply is read, so total
+    time is ~one network latency instead of one per series. Missing / failed
+    items are simply absent from the result (callers fall back per item).
+    """
+    global _ws
+    out: dict[tuple, pd.DataFrame] = {}
+    with _lock:
+        if _ws is None:
+            _ws = _open()
+            if _ws is None:
+                return out
+        pending: dict[int, tuple] = {}
         try:
-            ws.send(json.dumps({
-                "ticks_history": deriv_symbol,
-                "end":           "latest",
-                "count":         count,
-                "style":         "candles",
-                "granularity":   granularity,
-            }))
-
-            deadline = time.time() + 15
-            while time.time() < deadline:
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    break
-                ws.settimeout(remaining)
-                resp = json.loads(ws.recv())
-
+            for item in items:
+                symbol, interval, period = item
+                deriv_symbol, granularity = config.DERIV_SYMBOLS.get(symbol), _GRANULARITY.get(interval)
+                if not deriv_symbol or not granularity:
+                    continue
+                req_id = next(_req_id)
+                pending[req_id] = item
+                _ws.send(json.dumps({
+                    "ticks_history": deriv_symbol, "end": "latest",
+                    "count": _period_to_count(period, interval),
+                    "style": "candles", "granularity": granularity, "req_id": req_id,
+                }))
+            deadline = time.time() + timeout
+            while pending and time.time() < deadline:
+                _ws.settimeout(max(0.1, deadline - time.time()))
+                resp = json.loads(_ws.recv())
+                item = pending.pop(resp.get("req_id"), None)
+                if item is None:
+                    continue
                 if "error" in resp:
-                    logger.error(f"Deriv feed error for {symbol}: {resp['error']['message']}")
+                    logger.error(f"Deriv feed error for {item[0]} [{item[1]}]: {resp['error']['message']}")
+                    continue
+                df = _to_dataframe(resp.get("candles", []))
+                if df is not None:
+                    out[item] = df
+        except Exception as e:
+            logger.warning(f"Deriv batch interrupted ({e}) — {len(pending)} item(s) will fall back")
+            _close()
+    return out
+
+
+def _request(payload: dict, timeout: float = 15) -> dict | None:
+    """Send one request on the shared socket and return its reply (matched by req_id)."""
+    global _ws
+    with _lock:
+        for _ in range(2):   # second pass = fresh connection after a dropped one
+            if _ws is None:
+                _ws = _open()
+                if _ws is None:
                     return None
-
-                if resp.get("msg_type") == "candles":
-                    return _to_dataframe(resp["candles"])
-
-        finally:
-            ws.close()
-
-    except Exception as e:
-        logger.error(f"Deriv feed fetch failed for {symbol}: {e}")
-
+            req_id = next(_req_id)
+            try:
+                _ws.send(json.dumps({**payload, "req_id": req_id}))
+                deadline = time.time() + timeout
+                while time.time() < deadline:
+                    _ws.settimeout(max(0.1, deadline - time.time()))
+                    resp = json.loads(_ws.recv())
+                    if resp.get("req_id") == req_id:
+                        return resp
+                raise TimeoutError("no reply")
+            except Exception as e:
+                logger.debug(f"Deriv socket error ({e}) — reconnecting")
+                _close()
     return None
+
+
+def _open():
+    for url_tpl in _WS_URLS:
+        try:
+            return websocket.create_connection(url_tpl.format(app_id=config.DERIV_APP_ID), timeout=20)
+        except Exception as e:
+            logger.debug(f"Deriv connect failed ({url_tpl.split('?')[0]}): {e}")
+    return None
+
+
+def _close():
+    global _ws
+    try:
+        if _ws is not None:
+            _ws.close()
+    except Exception:
+        pass
+    _ws = None
 
 
 def is_available() -> bool:
     """Quick check — True if Deriv WebSocket is reachable."""
     try:
-        url = _WS_URL.format(app_id=config.DERIV_APP_ID)
-        ws  = websocket.create_connection(url, timeout=10)
+        ws = websocket.create_connection(_WS_URLS[0].format(app_id=config.DERIV_APP_ID), timeout=10)
         ws.close()
         return True
     except Exception:

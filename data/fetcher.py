@@ -55,6 +55,18 @@ def fetch_ohlcv(symbol: str, interval: str = CANDLE_INTERVAL, period: str = CAND
     return _yfinance_fetch(symbol, interval, period)
 
 
+def fetch_many(items: list[tuple[str, str, str]]) -> dict[tuple, pd.DataFrame | None]:
+    """
+    Fetch many (symbol, interval, period) series: one pipelined Deriv round trip,
+    then the normal per-series fallback chain for anything Deriv didn't return.
+    """
+    got = {k: _normalize(v) for k, v in deriv_feed.fetch_batch(items).items()}
+    for item in items:
+        if item not in got:
+            got[item] = fetch_ohlcv(*item)
+    return got
+
+
 def fetch_multiple(symbols: list[str], interval: str = CANDLE_INTERVAL, period: str = CANDLE_LOOKBACK) -> dict[str, pd.DataFrame]:
     return {s: df for s in symbols if (df := fetch_ohlcv(s, interval, period)) is not None}
 
