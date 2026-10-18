@@ -174,6 +174,12 @@ def scan(strategy: TrendFollowingStrategy, broker, dry_run: bool) -> None:
         if df_m5 is None:
             logger.warning(f"SKIP {name}: insufficient data")
             continue
+        last_candle = df_m5.index[-1].to_pydatetime()
+        if datetime.now(timezone.utc) - last_candle > timedelta(minutes=shadow_log.STALE_MINUTES):
+            # Weekend / holiday: sessions don't know the market is shut, and the last
+            # Friday setup would otherwise re-signal every cooldown period.
+            logger.info(f"SKIP {name}: market closed (last candle {last_candle:%a %H:%M} UTC)")
+            continue
 
         session_ok, session_info = is_session_active(symbol)
         blocked, news_reason = is_news_blocked(symbol)
