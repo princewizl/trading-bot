@@ -1,0 +1,12 @@
+.env
+.git
+.github
+.vscode
+__pycache__
+*.pyc
+logs/
+data/bot.db*
+data/heartbeat
+data/.calendar_cache.json
+hellpers
+deploy/

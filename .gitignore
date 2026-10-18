@@ -5,6 +5,8 @@
 logs/
 trade_log.csv
 data/.calendar_cache.json
+data/bot.db*
+data/heartbeat
 __pycache__/
 *.pyc
 *.pyo

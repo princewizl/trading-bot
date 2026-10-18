@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trading Bot Dashboard</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0f1117">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Trading Bot">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="/static/icons/icon-192.png">
+  <style>
+    /* ── Design tokens ──────────────────────────────────────────────────────── */
+    :root {
+      --bg:        #0f1117;
+      --surface:   #1a1d27;
+      --surface2:  #22263a;
+      --border:    #2e3347;
+      --text:      #e2e8f0;
+      --muted:     #8892a4;
+      --faint:     #4a5568;
+      --blue:      #60a5fa;
+      --green:     #4ade80;
+      --red:       #f87171;
+      --amber:     #fbbf24;
+      --purple:    #a78bfa;
+      --blue-dim:  rgba(96,165,250,.12);
+      --green-dim: rgba(74,222,128,.10);
+      --red-dim:   rgba(248,113,113,.10);
+      --amber-dim: rgba(251,191,36,.10);
+      --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --mono: 'Fira Code', 'Consolas', monospace;
+    }
+    [data-theme="light"] {
+      --bg:        #f0f2f8;
+      --surface:   #ffffff;
+      --surface2:  #f3f4f6;
+      --border:    #dde1ec;
+      --text:      #111827;
+      --muted:     #6b7280;
+      --faint:     #d1d5db;
+      --blue:      #2563eb;
+      --green:     #16a34a;
+      --red:       #dc2626;
+      --amber:     #d97706;
+      --purple:    #7c3aed;
+      --blue-dim:  rgba(37,99,235,.08);
+      --green-dim: rgba(22,163,74,.08);
+      --red-dim:   rgba(220,38,38,.08);
+      --amber-dim: rgba(217,119,6,.08);
+    }
+
+    /* ── Reset & base ───────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font);
+           font-size: 14px; line-height: 1.5; min-height: 100vh; }
+    a { color: var(--blue); text-decoration: none; }
+    strong { font-weight: 600; }
+
+    /* ── Layout ─────────────────────────────────────────────────────────────── */
+    .app { max-width: 1400px; margin: 0 auto; padding: 20px 24px 48px; }
+    .card { background: var(--surface); border: 1px solid var(--border);
+            border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+    .card-header { display: flex; align-items: center; justify-content: space-between;
+                   flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+    .card-header h2 { margin-bottom: 0; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 16px; }
+    @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; }
+                                 .grid-3 { grid-template-columns: 1fr; } }
+
+    /* ── Typography ─────────────────────────────────────────────────────────── */
+    h1 { font-size: 20px; font-weight: 700; }
+    h2 { font-size: 12px; font-weight: 600; text-transform: uppercase;
+         letter-spacing: .06em; color: var(--muted); margin-bottom: 14px; }
+    .muted { color: var(--muted); }
+    .pos   { color: var(--green); }
+    .neg   { color: var(--red); }
+    .mono  { font-family: var(--mono); }
+
+    /* ── Header ─────────────────────────────────────────────────────────────── */
+    header { display: flex; align-items: center; justify-content: space-between;
+             flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+    .header-left { display: flex; align-items: baseline; gap: 10px; }
+    .header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .mode-badge { background: var(--blue-dim); color: var(--blue); border: 1px solid var(--blue);
+                  border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: 700;
+                  letter-spacing: .06em; }
+    .last-updated { font-size: 12px; color: var(--muted); }
+    .refresh-cd   { font-size: 12px; color: var(--faint); font-family: var(--mono); }
+
+    /* ── Buttons ─────────────────────────────────────────────────────────────── */
+    .btn { display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px;
+           border-radius: 6px; border: 1px solid var(--border); background: var(--surface2);
+           color: var(--text); font-size: 12px; font-family: var(--font);
+           cursor: pointer; transition: background .15s; white-space: nowrap; }
+    .btn:hover { background: var(--border); }
+    .btn.active { background: var(--blue-dim); border-color: var(--blue); color: var(--blue); }
+    .btn-xs { padding: 3px 8px; font-size: 11px; }
+
+    /* ── Alerts ─────────────────────────────────────────────────────────────── */
+    .alert { border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;
+             font-size: 13px; display: flex; align-items: flex-start; gap: 10px; }
+    .alert-error   { background: var(--red-dim);   border: 1px solid var(--red);   color: var(--red); }
+    .alert-warning { background: var(--amber-dim); border: 1px solid var(--amber); color: var(--amber); }
+    .alert-info    { background: var(--blue-dim);  border: 1px solid var(--blue);  color: var(--blue); }
+
+    /* ── Stat tiles ──────────────────────────────────────────────────────────── */
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+             gap: 12px; margin-bottom: 16px; }
+    .tile { background: var(--surface); border: 1px solid var(--border);
+            border-radius: 10px; padding: 16px 18px; }
+    .tile-label { font-size: 11px; font-weight: 600; text-transform: uppercase;
+                  letter-spacing: .06em; color: var(--muted); margin-bottom: 6px; }
+    .tile-value { font-size: 24px; font-weight: 700; line-height: 1.1; }
+    .tile-sub   { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .tile-blue   .tile-value { color: var(--blue); }
+    .tile-green  .tile-value { color: var(--green); }
+    .tile-red    .tile-value { color: var(--red); }
+    .tile-amber  .tile-value { color: var(--amber); }
+    .tile-purple .tile-value { color: var(--purple); }
+
+    /* ── Badges ─────────────────────────────────────────────────────────────── */
+    .badge { display: inline-block; padding: 2px 7px; border-radius: 99px;
+             font-size: 11px; font-weight: 600; }
+    .badge-green  { background: var(--green-dim); color: var(--green); }
+    .badge-red    { background: var(--red-dim);   color: var(--red); }
+    .badge-amber  { background: var(--amber-dim); color: var(--amber); }
+    .badge-blue   { background: var(--blue-dim);  color: var(--blue); }
+    .badge-muted  { background: var(--surface2);  color: var(--muted); }
+    .outcome-win  { background: var(--green-dim); color: var(--green); }
+    .outcome-loss { background: var(--red-dim);   color: var(--red); }
+    .conf-high    { background: var(--amber-dim); color: var(--amber); }
+    .conf-medium  { background: var(--blue-dim);  color: var(--blue); }
+
+    /* ── Streak badge ───────────────────────────────────────────────────────── */
+    .streak-badge { display: inline-flex; align-items: center; gap: 5px;
+                    padding: 4px 12px; border-radius: 99px; font-size: 13px; font-weight: 700; }
+
+    /* ── Chart controls ─────────────────────────────────────────────────────── */
+    .chart-controls { display: flex; gap: 6px; }
+    .chart-wrap { position: relative; }
+
+    /* ── Table ───────────────────────────────────────────────────────────────── */
+    .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 9px 10px; color: var(--muted); font-weight: 600;
+         font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+         border-bottom: 1px solid var(--border); white-space: nowrap; }
+    td { padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    tr:last-child td { border-bottom: none; }
+    tr.row-win  td { background: rgba(74,222,128,.03); }
+    tr.row-loss td { background: rgba(248,113,113,.04); }
+    tr.hidden   { display: none; }
+    .dir-buy    { color: var(--green); font-weight: 600; }
+    .dir-sell   { color: var(--red);   font-weight: 600; }
+    .table-controls { display: flex; gap: 8px; }
+    .table-controls select {
+      background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+      padding: 4px 8px; border-radius: 6px; font-size: 12px; cursor: pointer;
+    }
+
+    /* ── Pair stat mini-bars ────────────────────────────────────────────────── */
+    .mini-bar-wrap { margin-top: 6px; padding-right: 44px; }   /* room for the % label hung off the bar */
+    .mini-bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; }
+    .mini-bar-label { width: 72px; color: var(--text); font-weight: 500; flex-shrink: 0; }
+    .mini-bar-track { flex: 1; background: var(--surface2); border-radius: 4px; height: 16px;
+                      position: relative; overflow: visible; }
+    .mini-bar-fill  { height: 100%; border-radius: 4px; transition: width .4s; }
+    .mini-bar-val   { position: absolute; right: -38px; top: 0; line-height: 16px;
+                      font-family: var(--mono); font-size: 11px; font-weight: 600; }
+    .mini-bar-be    { position: absolute; top: -3px; bottom: -3px; width: 1.5px;
+                      background: var(--red); opacity: .7; }
+    .mini-bar-be-label { position: absolute; top: -18px; font-size: 9px;
+                         color: var(--red); white-space: nowrap; transform: translateX(-50%); }
+
+    /* ── Bot status / PWA ───────────────────────────────────────────────────── */
+    [hidden] { display: none !important; }   /* .btn / .alert set display, which would override it */
+    /* Grid/flex children default to min-width:auto, so a wide table stretched the whole
+       page on phones; let them shrink and scroll inside their card instead. */
+    .app > *, .grid-2 > *, .grid-3 > *, .tiles > * { min-width: 0; }
+    .card { overflow-x: auto; }
+    .status-row { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; font-size: 13px; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+            font-size: 12px; font-weight: 600; border: 1px solid var(--border); background: var(--surface2); }
+    .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+    .pill.ok  .dot { background: var(--green); }
+    .pill.bad .dot { background: var(--red); }
+    .pill.ok  { color: var(--green); } .pill.bad { color: var(--red); }
+    .report-pre { font-family: var(--mono); font-size: 11.5px; line-height: 1.45; white-space: pre;
+                  overflow-x: auto; background: var(--surface2); border-radius: 8px; padding: 12px;
+                  max-height: 70vh; overflow-y: auto; margin-top: 12px; }
+    #push-btn.on { background: var(--green-dim); border-color: var(--green); color: var(--green); }
+    @media (max-width: 640px) {
+      .app { padding: 16px 16px 40px; }
+      .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .last-updated, .refresh-cd { font-size: 11px; }
+    }
+
+    /* ── Footer ─────────────────────────────────────────────────────────────── */
+    footer { text-align: center; color: var(--faint); font-size: 12px;
+             margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border); }
+    footer p { margin-bottom: 4px; }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Header ─────────────────────────────────────────────────────────────── -->
+  <header>
+    <div class="header-left">
+      <h1>Trading Bot</h1>
+      <span class="mode-badge">DEMO</span>
+    </div>
+    <div class="header-right">
+      <span class="last-updated">Updated: <strong id="fetched-at">{{ fetched_at }}</strong></span>
+      <span class="refresh-cd" id="refresh-cd">—</span>
+      <button class="btn" onclick="location.href='/refresh'">↻ Refresh</button>
+      <button class="btn" id="push-btn" onclick="togglePush()" hidden>🔔 Enable alerts</button>
+      <button class="btn" onclick="toggleTheme()" title="Toggle dark/light">◐</button>
+      <form method="post" action="/logout" style="display:inline"><button class="btn" title="Sign out">⎋</button></form>
+    </div>
+  </header>
+
+  <!-- ── Alerts ─────────────────────────────────────────────────────────────── -->
+  <div class="alert alert-warning" id="ios-hint" hidden>
+    <span>To get notifications on iPhone: tap Share → <strong>Add to Home Screen</strong>, then open the app from your Home Screen and tap 🔔.</span>
+  </div>
+
+  <!-- ── Bot status ─────────────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="status-row">
+      <span class="pill {{ 'ok' if bot.online else 'bad' }}" id="s-online"><span class="dot"></span>{{ 'Bot online' if bot.online else 'Bot offline' }}</span>
+      <span class="pill {{ 'ok' if bot.iq_connected else 'bad' }}" id="s-iq"><span class="dot"></span>IQ Option {{ 'connected' if bot.iq_connected else 'disconnected' }}</span>
+      <span class="muted">Mode <strong id="s-mode">{{ bot.mode }}</strong></span>
+      <span class="muted">Last scan <strong id="s-last">{{ (bot.last_scan or '—')[11:19] }}</strong></span>
+      <span class="muted">Next <strong id="s-next">{{ (bot.next_scan or '—')[11:19] }}</strong> UTC</span>
+      <span class="muted">Open trades <strong id="s-open">{{ open_trades | length }}</strong></span>
+    </div>
+    <div id="open-trades">
+      {% if open_trades %}
+      <table style="margin-top:12px;"><thead><tr><th>Pair</th><th>Dir</th><th>Stake</th><th>Payout</th><th>Expires (UTC)</th></tr></thead><tbody>
+        {% for t in open_trades %}
+        <tr><td>{{ t.pair }}</td><td class="dir-{{ t.direction | lower }}">{{ t.direction }}</td>
+            <td class="mono">${{ "%.2f" | format(t.stake) }}</td>
+            <td class="mono">{{ "%.0f%%" | format(t.payout * 100) if t.payout else "—" }}</td>
+            <td class="mono">{{ t.expires_at[11:19] }}</td></tr>
+        {% endfor %}
+      </tbody></table>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- ── Stat tiles ─────────────────────────────────────────────────────────── -->
+  <div class="tiles">
+    <div class="tile tile-blue">
+      <div class="tile-label">Balance</div>
+      <div class="tile-value" id="t-balance">
+        ${{ "%.2f" | format(stats.current_balance) }}
+      </div>
+      <div class="tile-sub">IQ Option DEMO</div>
+    </div>
+
+    <div class="tile {% if stats.net_pnl is not none and stats.net_pnl >= 0 %}tile-green{% elif stats.net_pnl is not none %}tile-red{% endif %}">
+      <div class="tile-label">Net P&amp;L</div>
+      <div class="tile-value" id="t-pnl">
+        {% if stats.net_pnl is not none %}
+          {{ "%+.2f" | format(stats.net_pnl) }}
+        {% else %}
+          —
+        {% endif %}
+      </div>
+      <div class="tile-sub">
+        {% if stats.start_balance %}from ${{ "%.0f" | format(stats.start_balance) }}{% else %}set START_BALANCE env var{% endif %}
+      </div>
+    </div>
+
+    <div class="tile {% if stats.overall_wr >= stats.break_even_wr %}tile-green{% else %}tile-red{% endif %}">
+      <div class="tile-label">Win Rate</div>
+      <div class="tile-value" id="t-wr">{{ stats.overall_wr }}%</div>
+      <div class="tile-sub" id="t-wl">{{ stats.wins }}W / {{ stats.losses }}L — {{ stats.total_trades }} trades</div>
+    </div>
+
+    <div class="tile">
+      <div class="tile-label">Today</div>
+      <div class="tile-value {% if stats.today_wr >= stats.break_even_wr %}pos{% elif stats.today_trades > 0 %}neg{% endif %}" id="t-today-wr">
+        {% if stats.today_trades > 0 %}{{ stats.today_wr }}%{% else %}—{% endif %}
+      </div>
+      <div class="tile-sub" id="t-today-wl">{{ stats.today_wins }}W / {{ stats.today_losses }}L ({{ stats.today_trades }} trades)</div>
+    </div>
+
+    <div class="tile tile-green">
+      <div class="tile-label">Peak Balance</div>
+      <div class="tile-value">${{ "%.2f" | format(stats.peak_balance) }}</div>
+      <div class="tile-sub">{{ "%.1f" | format(stats.drawdown_now_pct) }}% below peak now</div>
+    </div>
+
+    <div class="tile {% if stats.drawdown_max_pct > 15 %}tile-red{% elif stats.drawdown_max_pct > 8 %}tile-amber{% endif %}">
+      <div class="tile-label">Max Drawdown</div>
+      <div class="tile-value">{{ stats.drawdown_max_pct }}%</div>
+      <div class="tile-sub">from peak to lowest</div>
+    </div>
+  </div>
+
+  <!-- Streak & break-even info row -->
+  <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:16px; align-items:center;">
+    {% if stats.streak > 0 %}
+      {% if stats.streak_type == 'WIN' %}
+        <span class="streak-badge badge-green">🔥 {{ stats.streak }}-trade WIN streak</span>
+      {% else %}
+        <span class="streak-badge badge-red">⚠ {{ stats.streak }}-trade LOSS streak</span>
+      {% endif %}
+    {% endif %}
+    <span style="font-size:12px; color:var(--muted);">
+      Break-even at {{ stats.avg_payout_pct }}% avg payout = <strong>{{ stats.break_even_wr }}%</strong>
+    </span>
+    {% for name, ps in stats.pair_stats.items() %}
+      {% if ps.below_be %}
+        <span class="badge badge-red">{{ name }} below break-even ({{ ps.wr }}%)</span>
+      {% endif %}
+    {% endfor %}
+  </div>
+
+  <!-- ── Equity curve ───────────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-header">
+      <h2>Equity Curve — Demo Balance (USD)</h2>
+      <div class="chart-controls">
+        <button class="btn btn-xs active" id="range-all" onclick="setRange('all')">All time</button>
+        <button class="btn btn-xs"        id="range-7d"  onclick="setRange('7d')">7 days</button>
+        <button class="btn btn-xs"        id="range-1d"  onclick="setRange('1d')">Today</button>
+      </div>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="equity-chart" height="110"></canvas>
+    </div>
+  </div>
+
+  <!-- ── Pair WR + Daily P&L ─────────────────────────────────────────────────── -->
+  <div class="grid-2">
+    <div class="card">
+      <h2>Win Rate by Pair</h2>
+      <div class="mini-bar-wrap" id="pair-bars">
+        {% set be = stats.break_even_wr %}
+        {% for name, ps in stats.pair_stats.items() %}
+        <div class="mini-bar-row">
+          <div class="mini-bar-label" title="{{ ps.wins }}W / {{ ps.losses }}L">{{ name }}</div>
+          <div class="mini-bar-track">
+            <div class="mini-bar-fill"
+                 style="width:{{ ps.wr }}%;
+                        background:{% if ps.wr >= 65 %}var(--green){% elif ps.wr >= be %}var(--amber){% else %}var(--red){% endif %};
+                        opacity:.8">
+            </div>
+            <div class="mini-bar-be" style="left:{{ be }}%">
+              <span class="mini-bar-be-label">{{ be }}%</span>
+            </div>
+            <span class="mini-bar-val
+                         {% if ps.wr >= 65 %}pos{% elif ps.wr >= be %}{% else %}neg{% endif %}"
+                  style="color:{% if ps.wr >= 65 %}var(--green){% elif ps.wr >= be %}var(--amber){% else %}var(--red){% endif %}">
+              {{ ps.wr }}%
+            </span>
+          </div>
+        </div>
+        {% else %}
+        <p class="muted">No data yet.</p>
+        {% endfor %}
+      </div>
+      <!-- Pair detail table -->
+      {% if stats.pair_stats %}
+      <table style="margin-top:16px; font-size:12px;">
+        <thead>
+          <tr><th>Pair</th><th>W</th><th>L</th><th>Trades</th><th>WR</th></tr>
+        </thead>
+        <tbody>
+          {% for name, ps in stats.pair_stats.items() %}
+          <tr>
+            <td><strong>{{ name }}</strong></td>
+            <td class="pos">{{ ps.wins }}</td>
+            <td class="neg">{{ ps.losses }}</td>
+            <td class="muted">{{ ps.trades }}</td>
+            <td>
+              <strong {% if ps.below_be %}class="neg"{% elif ps.wr >= 65 %}class="pos"{% endif %}>
+                {{ ps.wr }}%
+              </strong>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h2>Daily P&amp;L</h2>
+      <canvas id="daily-chart" height="200"></canvas>
+      {% if stats.daily %}
+      <table style="margin-top:16px; font-size:12px;">
+        <thead>
+          <tr><th>Date</th><th>Trades</th><th>W/L</th><th>WR</th></tr>
+        </thead>
+        <tbody>
+          {% for day, ds in stats.daily.items() | reverse %}
+          <tr>
+            <td>{{ day }}</td>
+            <td class="muted">{{ ds.trades }}</td>
+            <td><span class="pos">{{ ds.wins }}W</span> / <span class="neg">{{ ds.losses }}L</span></td>
+            <td {% if ds.wr >= stats.break_even_wr %}class="pos"{% else %}class="neg"{% endif %}>
+              {{ ds.wr }}%
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- ── Session / Confidence / Direction breakdown ─────────────────────────── -->
+  <div class="grid-3">
+    <div class="card">
+      <h2>By Session</h2>
+      <canvas id="session-chart" height="160"></canvas>
+    </div>
+    <div class="card">
+      <h2>By Confidence</h2>
+      <canvas id="conf-chart" height="160"></canvas>
+    </div>
+    <div class="card">
+      <h2>BUY vs SELL</h2>
+      <canvas id="dir-chart" height="160"></canvas>
+    </div>
+  </div>
+
+  <!-- ── Recent trades ──────────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-header">
+      <h2>Recent Trades (last 50)</h2>
+      <div class="table-controls">
+        <select id="pair-filter" onchange="filterTable()">
+          <option value="">All pairs</option>
+          {% for name in stats.pair_stats %}
+          <option>{{ name }}</option>
+          {% endfor %}
+        </select>
+        <select id="outcome-filter" onchange="filterTable()">
+          <option value="">All outcomes</option>
+          <option>WIN</option>
+          <option>LOSS</option>
+        </select>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table id="trades-table">
+        <thead>
+          <tr>
+            <th>Time (UTC)</th>
+            <th>Pair</th>
+            <th>Dir</th>
+            <th>Session</th>
+            <th>Conf</th>
+            <th>ADX</th>
+            <th>RSI</th>
+            <th>HTF</th>
+            <th>Pattern</th>
+            <th>Stake</th>
+            <th>Outcome</th>
+            <th>Profit</th>
+            <th>Balance</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in stats.recent %}
+          <tr class="row-{{ t.outcome | lower }}"
+              data-pair="{{ t.pair }}" data-outcome="{{ t.outcome }}">
+            <td class="muted mono" style="font-size:12px;">{{ t.ts }}</td>
+            <td><strong>{{ t.pair }}</strong></td>
+            <td class="dir-{{ t.direction | lower }}">{{ t.direction }}</td>
+            <td class="muted" style="font-size:12px;">{{ t.session }}</td>
+            <td>
+              {% if t.confidence %}
+              <span class="badge conf-{{ t.confidence | lower }}">{{ t.confidence }}</span>
+              {% endif %}
+            </td>
+            <td class="mono muted" style="font-size:12px;">
+              {% if t.adx %}{{ "%.1f" | format(t.adx | float) }}{% endif %}
+            </td>
+            <td class="mono muted" style="font-size:12px;">
+              {% if t.rsi %}{{ "%.1f" | format(t.rsi | float) }}{% endif %}
+            </td>
+            <td class="muted" style="font-size:12px;">{{ t.htf_trend }}</td>
+            <td class="muted" style="font-size:12px;">{{ t.pattern }}</td>
+            <td class="mono">${{ "%.2f" | format(t.stake) }}</td>
+            <td>
+              <span class="badge outcome-{{ t.outcome | lower }}">{{ t.outcome }}</span>
+            </td>
+            <td class="mono {% if t.profit > 0 %}pos{% elif t.profit < 0 %}neg{% endif %}">
+              {{ "%+.2f" | format(t.profit) }}
+            </td>
+            <td class="mono" style="font-size:12px;">
+              {% if t.balance > 0 %}${{ "%.2f" | format(t.balance) }}{% else %}—{% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="13" class="muted" style="text-align:center; padding:24px;">
+            No completed trades yet.
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Shadow (paper) log ────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-header">
+      <h2>Paper Log — filter &amp; expiry test</h2>
+      <div class="table-controls">
+        <select id="rep-days"><option value="0">All data</option><option value="7">7 days</option><option value="14">14 days</option><option value="30">30 days</option></select>
+        <select id="rep-horizon"><option value="5">5 min</option><option value="15">15 min</option><option value="30">30 min</option></select>
+        <button class="btn btn-xs" onclick="loadReport()">Run report</button>
+      </div>
+    </div>
+    <p class="muted" style="font-size:12px;">Every 6/10+ setup is logged whether traded or not. A rule only beats break-even when its whole confidence interval sits above it.</p>
+    <div id="report" class="report-pre" hidden></div>
+  </div>
+
+  <!-- ── Footer ─────────────────────────────────────────────────────────────── -->
+  <footer>
+    <p>Break-even at {{ stats.avg_payout_pct }}% median payout = <strong>{{ stats.break_even_wr }}%</strong> &nbsp;·&nbsp;
+       Refreshes every minute</p>
+    <p>The bot service scans every M5 candle · trades before 20 Jul 2026 used the old balance-based result method</p>
+  </footer>
+
+</div><!-- .app -->
+
+<!-- ── Scripts ─────────────────────────────────────────────────────────────── -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+/* ── Server-injected data ───────────────────────────────────────────────────── */
+const S  = {{ stats | tojson | safe }};
+const BE = S.break_even_wr;
+
+/* ── Color palette ──────────────────────────────────────────────────────────── */
+function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+const C = {
+  blue:   () => css('--blue'),
+  green:  () => css('--green'),
+  red:    () => css('--red'),
+  amber:  () => css('--amber'),
+  purple: () => css('--purple'),
+  muted:  () => css('--muted'),
+  faint:  () => css('--faint'),
+  border: () => css('--border'),
+  surface2: () => css('--surface2'),
+};
+
+/* ── Chart defaults ─────────────────────────────────────────────────────────── */
+Chart.defaults.color         = '#8892a4';
+Chart.defaults.borderColor   = '#2e3347';
+Chart.defaults.font.family   = '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+Chart.defaults.font.size     = 11;
+Chart.defaults.plugins.legend.display = false;
+
+function gridOpts() {
+  return { color: C.border(), drawTicks: false };
+}
+function baseTooltip() {
+  return {
+    backgroundColor: '#1a1d27',
+    borderColor:     '#2e3347',
+    borderWidth:     1,
+    titleColor:      '#e2e8f0',
+    bodyColor:       '#8892a4',
+    padding:         10,
+    cornerRadius:    6,
+  };
+}
+
+/* ── Equity chart ───────────────────────────────────────────────────────────── */
+let equityChart;
+const allEqTs  = S.equity_ts;
+const allEqBal = S.equity_bal;
+
+function buildEquityChart(tsArr, balArr) {
+  const ctx = document.getElementById('equity-chart').getContext('2d');
+
+  const startBal = S.start_balance || balArr[0];
+  const labels   = tsArr.map(t => t.replace('T', ' ').slice(0, 16) + ' UTC');
+
+  const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+  gradient.addColorStop(0,   'rgba(96,165,250,0.18)');
+  gradient.addColorStop(1,   'rgba(96,165,250,0.01)');
+
+  const pointColors = balArr.map(b => b >= startBal ? 'rgba(96,165,250,0)' : 'rgba(248,113,113,0)');
+
+  equityChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Balance',
+          data: balArr,
+          borderColor: C.blue(),
+          borderWidth: 2,
+          fill: true,
+          backgroundColor: gradient,
+          pointRadius: 3,
+          pointHoverRadius: 6,
+          pointBackgroundColor: C.blue(),
+          pointBorderColor: '#1a1d27',
+          pointBorderWidth: 1.5,
+          tension: 0.15,
+        },
+        {
+          label: `Start ($${startBal})`,
+          data: balArr.map(() => startBal),
+          borderColor: 'rgba(139,148,163,0.4)',
+          borderWidth: 1,
+          borderDash: [5, 4],
+          pointRadius: 0,
+          fill: false,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        tooltip: {
+          ...baseTooltip(),
+          callbacks: {
+            label: ctx => `Balance: $${ctx.parsed.y.toFixed(2)}`,
+          },
+        },
+        legend: { display: true, position: 'top',
+          labels: { boxWidth: 14, filter: item => item.text !== `Start ($${startBal})` || true } },
+      },
+      scales: {
+        x: { grid: gridOpts(), ticks: { maxTicksLimit: 10, maxRotation: 0 } },
+        y: {
+          grid: gridOpts(),
+          ticks: { callback: v => `$${v.toLocaleString()}` },
+        },
+      },
+    },
+  });
+}
+
+function setRange(range) {
+  ['all','7d','1d'].forEach(r => {
+    document.getElementById(`range-${r}`).classList.toggle('active', r === range);
+  });
+
+  const now = new Date();
+  let cutoff;
+  if (range === '7d') cutoff = new Date(now - 7 * 86400000);
+  else if (range === '1d') cutoff = new Date(now - 86400000);
+  else cutoff = null;
+
+  let ts  = allEqTs;
+  let bal = allEqBal;
+  if (cutoff) {
+    const filtered = allEqTs
+      .map((t, i) => ({ t, b: allEqBal[i] }))
+      .filter(p => new Date(p.t) >= cutoff);
+    ts  = filtered.map(p => p.t);
+    bal = filtered.map(p => p.b);
+  }
+
+  equityChart.data.labels = ts.map(t => t.replace('T', ' ').slice(0, 16) + ' UTC');
+  equityChart.data.datasets[0].data = bal;
+  equityChart.data.datasets[1].data = bal.map(() => S.start_balance || bal[0]);
+  equityChart.update();
+}
+
+/* ── Daily P&L chart ────────────────────────────────────────────────────────── */
+function buildDailyChart() {
+  const days    = Object.keys(S.daily);
+  const profits = days.map(d => S.daily[d].profit);
+  const colors  = profits.map(p => p >= 0 ? 'rgba(74,222,128,0.75)' : 'rgba(248,113,113,0.75)');
+
+  new Chart(document.getElementById('daily-chart').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: days,
+      datasets: [{
+        label: 'P&L',
+        data: profits,
+        backgroundColor: colors,
+        borderRadius: 4,
+        borderSkipped: false,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        tooltip: {
+          ...baseTooltip(),
+          callbacks: {
+            label: ctx => `P&L: ${ctx.parsed.y >= 0 ? '+' : ''}$${ctx.parsed.y.toFixed(2)}`,
+          },
+        },
+      },
+      scales: {
+        x: { grid: gridOpts() },
+        y: {
+          grid: gridOpts(),
+          ticks: { callback: v => `$${v}` },
+        },
+      },
+    },
+  });
+}
+
+/* ── Session chart ──────────────────────────────────────────────────────────── */
+function buildSessionChart() {
+  const sessions = Object.keys(S.session_stats);
+  const wrs      = sessions.map(s => S.session_stats[s].wr);
+  const trades   = sessions.map(s => S.session_stats[s].trades);
+
+  new Chart(document.getElementById('session-chart').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: sessions.map(s => s.charAt(0).toUpperCase() + s.slice(1)),
+      datasets: [{
+        label: 'Win Rate %',
+        data: wrs,
+        backgroundColor: wrs.map(w =>
+          w >= 65 ? 'rgba(74,222,128,0.75)' : w >= BE ? 'rgba(251,191,36,0.75)' : 'rgba(248,113,113,0.75)'
+        ),
+        borderRadius: 4,
+        borderSkipped: false,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        tooltip: {
+          ...baseTooltip(),
+          callbacks: {
+            label: (ctx) => {
+              const sess = sessions[ctx.dataIndex];
+              const ss   = S.session_stats[sess];
+              return [`WR: ${ctx.parsed.y}%`, `${ss.wins}W / ${ss.losses}L (${ss.trades} trades)`];
+            },
+          },
+        },
+      },
+      scales: {
+        x: { grid: gridOpts() },
+        y: {
+          min: 0, max: 100,
+          grid: gridOpts(),
+          ticks: { callback: v => `${v}%` },
+        },
+      },
+    },
+  });
+}
+
+/* ── Confidence chart ───────────────────────────────────────────────────────── */
+function buildConfChart() {
+  const confs = Object.keys(S.conf_stats);
+  const wrs   = confs.map(c => S.conf_stats[c].wr);
+
+  new Chart(document.getElementById('conf-chart').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: confs,
+      datasets: [{
+        label: 'Win Rate %',
+        data: wrs,
+        backgroundColor: wrs.map(w =>
+          w >= 65 ? 'rgba(74,222,128,0.75)' : w >= BE ? 'rgba(251,191,36,0.75)' : 'rgba(248,113,113,0.75)'
+        ),
+        borderRadius: 4,
+        borderSkipped: false,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        tooltip: {
+          ...baseTooltip(),
+          callbacks: {
+            label: (ctx) => {
+              const conf = confs[ctx.dataIndex];
+              const cs   = S.conf_stats[conf];
+              return [`WR: ${ctx.parsed.y}%`, `${cs.wins}W / ${cs.losses}L`];
+            },
+          },
+        },
+      },
+      scales: {
+        x: { grid: gridOpts() },
+        y: {
+          min: 0, max: 100,
+          grid: gridOpts(),
+          ticks: { callback: v => `${v}%` },
+        },
+      },
+    },
+  });
+}
+
+/* ── Direction chart ────────────────────────────────────────────────────────── */
+function buildDirChart() {
+  const dirs = Object.keys(S.dir_stats);
+  const wrs  = dirs.map(d => S.dir_stats[d].wr);
+
+  new Chart(document.getElementById('dir-chart').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: dirs,
+      datasets: [{
+        label: 'Win Rate %',
+        data: wrs,
+        backgroundColor: dirs.map(d =>
+          d === 'BUY' ? 'rgba(74,222,128,0.75)' : 'rgba(248,113,113,0.75)'
+        ),
+        borderRadius: 4,
+        borderSkipped: false,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        tooltip: {
+          ...baseTooltip(),
+          callbacks: {
+            label: (ctx) => {
+              const dir = dirs[ctx.dataIndex];
+              const ds  = S.dir_stats[dir];
+              return [`WR: ${ctx.parsed.y}%`, `${ds.wins}W / ${ds.losses}L`];
+            },
+          },
+        },
+      },
+      scales: {
+        x: { grid: gridOpts() },
+        y: {
+          min: 0, max: 100,
+          grid: gridOpts(),
+          ticks: { callback: v => `${v}%` },
+        },
+      },
+    },
+  });
+}
+
+/* ── Table filter ───────────────────────────────────────────────────────────── */
+function filterTable() {
+  const pairF    = document.getElementById('pair-filter').value.toLowerCase();
+  const outcomeF = document.getElementById('outcome-filter').value.toLowerCase();
+  document.querySelectorAll('#trades-table tbody tr[data-pair]').forEach(row => {
+    const pairMatch    = !pairF    || row.dataset.pair.toLowerCase()    === pairF;
+    const outcomeMatch = !outcomeF || row.dataset.outcome.toLowerCase() === outcomeF;
+    row.classList.toggle('hidden', !(pairMatch && outcomeMatch));
+  });
+}
+
+/* ── Auto-refresh countdown ─────────────────────────────────────────────────── */
+let refreshIntervalId;
+function startCountdown() {
+  let seconds = 60;
+  const el = document.getElementById('refresh-cd');
+  el.textContent = `auto-refresh in 1:00`;
+
+  refreshIntervalId = setInterval(async () => {
+    seconds--;
+    const m = String(Math.floor(seconds / 60)).padStart(1, '0');
+    const s = String(seconds % 60).padStart(2, '0');
+    el.textContent = `auto-refresh in ${m}:${s}`;
+
+    if (seconds <= 0) {
+      clearInterval(refreshIntervalId);
+      el.textContent = 'refreshing…';
+      try {
+        const resp = await fetch('/api/data');
+        if (resp.status === 401) { location.href = '/login'; return; }
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const json = await resp.json();
+        applyStats(json.stats, json.fetched_at);
+        applyBot(json.bot, json.open_trades);
+      } catch (e) {
+        el.textContent = 'refresh failed — reload page';
+        return;
+      }
+      seconds = 60;
+      startCountdown();
+    }
+  }, 1000);
+}
+
+/* ── Apply fresh stats without full page reload ──────────────────────────────── */
+function applyStats(ns, fetchedAt) {
+  // Tiles
+  const fmt2 = n => n != null ? n.toFixed(2) : '—';
+  const el = id => document.getElementById(id);
+
+  if (el('t-balance'))  el('t-balance').textContent  = `$${fmt2(ns.current_balance)}`;
+  if (el('t-pnl'))      el('t-pnl').textContent      = ns.net_pnl != null ? (ns.net_pnl >= 0 ? '+' : '') + fmt2(ns.net_pnl) : '—';
+  if (el('t-wr'))       el('t-wr').textContent        = `${ns.overall_wr}%`;
+  if (el('t-wl'))       el('t-wl').textContent        = `${ns.wins}W / ${ns.losses}L — ${ns.total_trades} trades`;
+  if (el('t-today-wr')) el('t-today-wr').textContent  = ns.today_trades > 0 ? `${ns.today_wr}%` : '—';
+  if (el('t-today-wl')) el('t-today-wl').textContent  = `${ns.today_wins}W / ${ns.today_losses}L (${ns.today_trades} trades)`;
+
+  // Equity chart update
+  if (equityChart && ns.equity_bal.length) {
+    equityChart.data.labels             = ns.equity_ts.map(t => t.replace('T', ' ').slice(0, 16) + ' UTC');
+    equityChart.data.datasets[0].data   = ns.equity_bal;
+    equityChart.data.datasets[1].data   = ns.equity_bal.map(() => ns.start_balance || ns.equity_bal[0]);
+    equityChart.update();
+  }
+
+  if (fetchedAt) {
+    const d = new Date(fetchedAt * 1000);
+    if (el('fetched-at')) el('fetched-at').textContent =
+      d.toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+  }
+}
+
+/* ── Bot status ─────────────────────────────────────────────────────────────── */
+function setPill(id, ok, text) {
+  const p = document.getElementById(id);
+  if (!p) return;
+  p.className = 'pill ' + (ok ? 'ok' : 'bad');
+  p.innerHTML = '<span class="dot"></span>' + text;
+}
+function applyBot(b, open) {
+  if (!b) return;
+  setPill('s-online', b.online, b.online ? 'Bot online' : 'Bot offline');
+  setPill('s-iq', b.iq_connected, 'IQ Option ' + (b.iq_connected ? 'connected' : 'disconnected'));
+  const t = v => (v || '—').slice(11, 19) || '—';
+  document.getElementById('s-mode').textContent = b.mode;
+  document.getElementById('s-last').textContent = t(b.last_scan);
+  document.getElementById('s-next').textContent = t(b.next_scan);
+  document.getElementById('s-open').textContent = open.length;
+  const box = document.getElementById('open-trades');
+  box.replaceChildren();
+  if (!open.length) return;
+  const tbl = document.createElement('table');
+  tbl.style.marginTop = '12px';
+  tbl.innerHTML = '<thead><tr><th>Pair</th><th>Dir</th><th>Stake</th><th>Payout</th><th>Expires (UTC)</th></tr></thead>';
+  const tb = document.createElement('tbody');
+  for (const o of open) {
+    const tr = document.createElement('tr');
+    const cells = [o.pair, o.direction, '$' + o.stake.toFixed(2), o.payout ? Math.round(o.payout * 100) + '%' : '—', o.expires_at.slice(11, 19)];
+    cells.forEach((c, i) => {
+      const td = document.createElement('td');
+      td.textContent = c;
+      if (i === 1) td.className = 'dir-' + o.direction.toLowerCase();
+      if (i >= 2) td.classList.add('mono');
+      tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  }
+  tbl.appendChild(tb);
+  box.appendChild(tbl);
+}
+
+/* ── Paper-log report ───────────────────────────────────────────────────────── */
+async function loadReport() {
+  const box = document.getElementById('report');
+  box.hidden = false;
+  box.textContent = 'Running…';
+  const days = document.getElementById('rep-days').value;
+  const horizon = document.getElementById('rep-horizon').value;
+  try {
+    const r = await fetch(`/api/report?days=${days}&horizon=${horizon}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    box.textContent = (await r.json()).text || 'No data yet.';
+  } catch (e) {
+    box.textContent = 'Report failed: ' + e.message;
+  }
+}
+
+/* ── Push notifications ─────────────────────────────────────────────────────── */
+const VAPID_KEY = {{ vapid_public_key | tojson }};
+
+function b64ToBytes(b64) {
+  const pad = '='.repeat((4 - b64.length % 4) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, c => c.charCodeAt(0));
+}
+
+async function currentSub() {
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+
+async function refreshPushButton() {
+  const btn = document.getElementById('push-btn');
+  const sub = await currentSub();
+  btn.classList.toggle('on', Boolean(sub));
+  btn.textContent = sub ? '🔔 Alerts on' : '🔔 Enable alerts';
+  btn.title = sub ? 'Alerts on — tap to send a test or turn off' : 'Get push notifications on this device';
+}
+
+async function togglePush() {
+  const btn = document.getElementById('push-btn');
+  try {
+    const sub = await currentSub();
+    if (sub) {
+      if (confirm('Alerts are on for this device.\n\nOK = send a test notification\nCancel = turn alerts off')) {
+        const r = await fetch('/api/push/test', { method: 'POST' });
+        const j = await r.json();
+        if (!j.delivered) alert('Test was not delivered — check VAPID keys on the server.');
+      } else {
+        await fetch('/api/push/unsubscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                              body: JSON.stringify({ endpoint: sub.endpoint }) });
+        await sub.unsubscribe();
+      }
+    } else {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') { alert('Notifications are blocked for this site in your browser settings.'); return; }
+      const reg = await navigator.serviceWorker.ready;
+      const newSub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(VAPID_KEY) });
+      const r = await fetch('/api/push/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify(newSub) });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    }
+  } catch (e) {
+    alert('Could not change alerts: ' + e.message);
+  }
+  refreshPushButton();
+}
+
+async function initPush() {
+  if (!('serviceWorker' in navigator)) return;
+  await navigator.serviceWorker.register('/sw.js');
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  if (!('PushManager' in window) || !VAPID_KEY) {
+    if (ios && !standalone) document.getElementById('ios-hint').hidden = false;
+    return;
+  }
+  document.getElementById('push-btn').hidden = false;
+  refreshPushButton();
+}
+
+/* ── Theme toggle ───────────────────────────────────────────────────────────── */
+function toggleTheme() {
+  const html  = document.documentElement;
+  const theme = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  html.setAttribute('data-theme', theme);
+  localStorage.setItem('theme', theme);
+  // Update chart defaults to match new theme
+  Chart.defaults.color       = theme === 'dark' ? '#8892a4' : '#6b7280';
+  Chart.defaults.borderColor = theme === 'dark' ? '#2e3347' : '#dde1ec';
+}
+
+/* ── Init ───────────────────────────────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', () => {
+  // Restore saved theme
+  const saved = localStorage.getItem('theme');
+  if (saved) document.documentElement.setAttribute('data-theme', saved);
+
+  buildEquityChart(allEqTs, allEqBal);
+  buildDailyChart();
+  buildSessionChart();
+  buildConfChart();
+  buildDirChart();
+  startCountdown();
+  initPush();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+# Two services from one image, sharing the SQLite volume:
+#   bot  — trading loop (bot_service.py). Outbound only: Deriv, IQ Option, push services.
+#   web  — PWA dashboard + push subscriptions (web_app.py), served at https://bot.collxct.ng
+#          by the main Collxct nginx (collxct-nginx-1) over its Docker network.
+
+x-common: &common
+  build: .
+  image: trading-bot:latest
+  restart: unless-stopped
+  env_file:
+    - .env
+  volumes:
+    - bot_data:/data
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  bot:
+    <<: *common
+    container_name: trading-bot
+    # Give an in-flight scan time to finish; open trades persist in SQLite either way.
+    stop_grace_period: 30s
+    # Shares the host with Collxct + Recbot in production — cap it so it can't starve them.
+    mem_limit: 512m
+    cpus: 0.5
+
+  web:
+    <<: *common
+    container_name: trading-bot-web
+    # One worker: the bot-offline watchdog thread must run exactly once.
+    command: ["gunicorn", "-w", "1", "--threads", "4", "-b", "0.0.0.0:8000", "--access-logfile", "-", "web_app:app"]
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+    networks:
+      - default
+      - collxct_net
+    mem_limit: 256m
+    cpus: 0.25
+
+networks:
+  collxct_net:
+    external: true
+    name: collxct_collxct_net
+
+volumes:
+  bot_data:

@@ -1,7 +1,7 @@
 name: Trading Bot — Signal Scan + Auto-Trade
 
 on:
-  # Triggered by cron-job.org every 5 minutes via GitHub API
+  # Legacy one-shot scan (run_scan.py) — manual trigger only
   workflow_dispatch:
     inputs:
       dry_run:
@@ -11,9 +11,8 @@ on:
         type: choice
         options: ['false', 'true']
 
-  # GitHub's own scheduler as a fallback (less reliable for 5-min intervals)
-  schedule:
-    - cron: '*/5 * * * *'
+  # No schedule: the bot now runs continuously on the server (bot_service.py).
+  # A schedule here would trade the same account in parallel. Manual runs only.
 
 jobs:
   scan:

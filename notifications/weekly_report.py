@@ -23,15 +23,17 @@ def should_send_weekly() -> bool:
     return now.weekday() == 6 and now.hour == 20
 
 
-def send_weekly_report():
-    from data.trade_journal import get_all_trades
+def send_weekly_report(all_trades: list[dict] | None = None):
+    """Email the weekly report. all_trades defaults to the Gist journal (legacy run_scan.py)."""
     from notifications.alerts import _send, _email_configured
 
     if not _email_configured():
         logger.warning("Email not configured — skipping weekly report")
         return
 
-    all_trades  = get_all_trades()
+    if all_trades is None:
+        from data.trade_journal import get_all_trades
+        all_trades = get_all_trades()
     week_trades = _last_n_days(all_trades, 7)
 
     if not week_trades:

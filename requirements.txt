@@ -6,3 +6,7 @@ colorama>=0.4.6
 requests>=2.31.0
 python-dotenv>=1.0.0
 git+https://github.com/iqoptionapi/iqoptionapi.git@8a903cc094a74af1ed935a56a2d6b5a9ed3319d7
+# Web app (PWA) + push
+flask>=3.0.0
+gunicorn>=22.0.0
+pywebpush>=2.0.0
