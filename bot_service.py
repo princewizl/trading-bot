@@ -96,10 +96,14 @@ def main() -> None:
     while not _stop:
         if broker and not broker.ensure_connected():
             iq_down_since = iq_down_since or time.time()
-            if not iq_down_alerted and time.time() - iq_down_since >= IQ_DOWN_ALERT_SECS:
-                notify.alert("IQ Option unreachable", "Reconnecting every few seconds — no trades until it's back.", tag="iq")
+            if not iq_down_alerted and broker.auth_rejected:
+                notify.alert("IQ Option rejected the login",
+                             "Fix IQ_EMAIL / IQ_PASSWORD in .env, then: docker compose up -d. Retrying every 30 min.", tag="iq")
                 iq_down_alerted = True
-            time.sleep(5)    # back off; scans still run signal-only below
+            elif not iq_down_alerted and time.time() - iq_down_since >= IQ_DOWN_ALERT_SECS:
+                notify.alert("IQ Option unreachable", "Reconnecting with backoff — no trades until it's back.", tag="iq")
+                iq_down_alerted = True
+            time.sleep(2)    # broker backs off internally; scans still run signal-only below
         elif broker and iq_down_since:
             if iq_down_alerted:
                 notify.alert("IQ Option reconnected", f"Down for {(time.time() - iq_down_since) / 60:.0f} min.", tag="iq")

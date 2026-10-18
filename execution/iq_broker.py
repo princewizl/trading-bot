@@ -32,6 +32,8 @@ CONNECT_TIMEOUT = 45
 CALL_TIMEOUT    = 15
 MAX_STUCK       = 3
 CACHE_SECONDS   = 1800   # open-asset and payout catalog refresh
+AUTH_BACKOFF    = 1800   # after IQ rejects the credentials — hammering a bad password risks a lockout
+MAX_BACKOFF     = 300    # cap for other connect failures (10s, 20s, 40s ... 300s)
 
 
 class CallTimeout(Exception):
@@ -50,6 +52,9 @@ class IQBroker:
         self._payouts: dict[str, float] = {}
         self._open: set[str] | None = None
         self._catalog_at = 0.0
+        self._next_attempt = 0.0
+        self._fail_streak = 0
+        self.auth_rejected = False
 
     # ── Connection ────────────────────────────────────────────────────────
 
@@ -62,9 +67,18 @@ class IQBroker:
     def ensure_connected(self) -> bool:
         if self.connected():
             return True
+        if time.time() < self._next_attempt:
+            return False
         if self.iq is not None:
             logger.warning("IQ Option connection lost — reconnecting")
-        return self._connect()
+        if self._connect():
+            self._fail_streak, self.auth_rejected = 0, False
+            return True
+        self._fail_streak += 1
+        delay = AUTH_BACKOFF if self.auth_rejected else min(MAX_BACKOFF, 10 * 2 ** (self._fail_streak - 1))
+        self._next_attempt = time.time() + delay
+        logger.warning(f"Next IQ Option connect attempt in {delay}s")
+        return False
 
     def _connect(self) -> bool:
         def _do():
@@ -82,6 +96,7 @@ class IQBroker:
             logger.error(f"IQ Option connect error: {e}")
             return False
         if not ok:
+            self.auth_rejected = "invalid_credentials" in str(reason)
             logger.error(f"IQ Option login failed: {reason}")
             return False
 
