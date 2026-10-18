@@ -46,6 +46,10 @@ VAPID_PUBLIC_KEY=...    VAPID_PRIVATE_KEY=...   VAPID_SUBJECT=mailto:<your email
 TRADE_LOG_GIST_ID=<existing gist id, only for the one-time import>
 ```
 
+**Values containing `$` must be single-quoted** (`IQ_PASSWORD='pa$$word'`).
+Docker Compose otherwise treats `$…` as a variable and silently changes the
+value; that's how a correct IQ password reached the bot two characters short.
+
 Generate the VAPID pair once with `python -m notifications.push --gen-keys`
 (locally, or on the server after step 3 with
 `docker compose run --rm bot python -m notifications.push --gen-keys`). Keep
@@ -72,45 +76,24 @@ docker compose up -d
 docker compose logs -f bot      # expect: IQ Option connected (DEMO) … Next scan at HH:M4:35 UTC
 ```
 
-## 5. Certificate for bot.collxct.ng
-
-Issue it the way Recbot's was issued (standalone, with the main nginx briefly
-stopped). **Collxct and Recbot are offline for roughly 10-20 seconds** while
-certbot validates, so do this at a quiet time:
+## 5. nginx + certificate for bot.collxct.ng (zero downtime)
 
 ```bash
-certbot certonly --standalone -d bot.collxct.ng \
-  --pre-hook  "docker stop collxct-nginx-1" \
-  --post-hook "docker start collxct-nginx-1"
+bash /opt/trading-bot/deploy/setup-nginx.sh
 ```
 
-The hooks are saved in `/etc/letsencrypt/renewal/bot.collxct.ng.conf`, so
-renewals repeat the same short stop/start automatically. Check with
-`certbot renew --dry-run`.
+The script backs up `/opt/collxct/nginx/nginx.conf`, adds a port-80 block that
+serves ACME challenges from `/etc/letsencrypt/acme-webroot` (already mounted
+into `collxct-nginx-1`), issues the certificate with `certbot --webroot`, then
+adds the HTTPS block. Every step runs `nginx -t` before a graceful reload, and
+a failed test restores the backup. Collxct, Recbot and Simitex never go down,
+and renewals only reload nginx. It's safe to re-run.
 
-## 6. Add the nginx server block
+The HTTPS block resolves `trading-bot-web` at request time, so nginx still
+starts and reloads even if the bot's web container is down. A bot outage can
+never take the other sites offline.
 
-Find where the main nginx reads its config (the same place the
-`recbot.collxct.ng` block lives):
-
-```bash
-docker inspect collxct-nginx-1 --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'
-grep -rl "recbot.collxct.ng" /opt/collxct 2>/dev/null
-```
-
-Add `deploy/nginx-bot.collxct.ng.conf` there. Either copy it as its own file
-if nginx includes a `conf.d/` directory, or paste it next to the recbot block.
-Then test **before** reloading:
-
-```bash
-docker exec collxct-nginx-1 nginx -t && docker exec collxct-nginx-1 nginx -s reload
-```
-
-The block resolves `trading-bot-web` at request time, so nginx still starts and
-reloads even if the bot's web container is down. A bot outage can never take
-Collxct or Recbot offline.
-
-## 7. Phone setup
+## 6. Phone setup
 
 1. Open **https://bot.collxct.ng** and sign in.
 2. **Android (Chrome):** tap **🔔 Enable alerts** and allow. Optionally use
@@ -124,7 +107,7 @@ UNKNOWN), circuit breaker tripped, IQ Option unreachable > 5 min and back,
 bot offline > 5 min and back (sent by the web container's watchdog), and the
 Sunday 20:00 UTC weekly summary.
 
-## 8. Retire the old pieces
+## 7. Retire the old pieces
 
 - PythonAnywhere dashboard: delete the web app there.
 - Gist: no longer written or read after the import. Keep it as an archive or delete it.
