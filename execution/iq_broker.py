@@ -56,6 +56,7 @@ class IQBroker:
         self._fail_streak = 0
         self.auth_rejected = False
         self.catalog: dict[str, set[str]] = {}   # option type -> tickers open right now
+        self._listed: set[str] = set()           # every turbo/binary ticker IQ offers at all
 
     # ── Connection ────────────────────────────────────────────────────────
 
@@ -131,21 +132,26 @@ class IQBroker:
             return base, ""
         if self.allow_otc and f"{base}-OTC" in self._open:
             return f"{base}-OTC", ""
-        return None, f"{base} closed for turbo on IQ Option" + ("" if self.allow_otc else " (OTC disabled)")
+        if base not in self._listed:
+            why = f"IQ Option offers no real-market turbo option for {base} (OTC only)"
+        else:
+            why = f"{base} turbo suspended on IQ Option right now"
+        return None, why + ("" if self.allow_otc else "; OTC trading disabled")
 
     def availability(self, bases: list[str]) -> dict[str, str]:
         """Per base symbol, which IQ option types are open now, e.g. {'USDJPY': 'digital'}."""
         self._refresh_catalog()
         out = {}
         for base in bases:
-            kinds = [k for k, syms in self.catalog.items() if base in syms]
-            otc = [k for k, syms in self.catalog.items() if f"{base}-OTC" in syms]
-            desc = ",".join(kinds) or "closed"
-            if otc:
-                desc += f" | OTC: {','.join(otc)}"
-            if base in self._payouts:
-                desc += f" | turbo payout {self._payouts[base]:.0%}"
-            out[base] = desc
+            parts = []
+            for tick in (base, f"{base}-OTC"):
+                if tick not in self._listed:
+                    parts.append(f"{tick}: not offered")
+                    continue
+                kinds = [k for k, syms in self.catalog.items() if tick in syms]
+                pay = f" {self._payouts[tick]:.0%}" if tick in self._payouts else ""
+                parts.append(f"{tick}: {'open ' + '/'.join(kinds) if kinds else 'suspended'}{pay}")
+            out[base] = " | ".join(parts)
         return out
 
     def payout(self, ticker: str) -> float | None:
@@ -153,29 +159,35 @@ class IQBroker:
         return self._payouts.get(ticker)
 
     def _refresh_catalog(self) -> None:
+        """
+        Open turbo/binary assets and turbo payouts, from one get_all_init call.
+
+        Not get_all_open_time / get_all_profit: the former also queries IQ's
+        digital-options catalog, which no longer answers (30s hang, then a crash
+        in a library thread), and every hang counted toward the stuck-call exit.
+        """
         if time.time() - self._catalog_at < CACHE_SECONDS:
             return
         self._catalog_at = time.time()
         try:
-            data = self._call(self.iq.get_all_open_time, 30)
-            self._open = {
-                sym.upper() for cat in ("turbo",) for sym, info in data.get(cat, {}).items()
-                if isinstance(info, dict) and info.get("open")
-            }
-            self.catalog = {
-                cat: {sym.upper() for sym, info in data.get(cat, {}).items() if isinstance(info, dict) and info.get("open")}
-                for cat in ("turbo", "binary", "digital")
-            }
+            res = self._call(self.iq.get_all_init, 30)["result"]
+            catalog: dict[str, set[str]] = {"turbo": set(), "binary": set()}
+            payouts: dict[str, float] = {}
+            listed: set[str] = set()
+            for kind in catalog:
+                for a in res[kind]["actives"].values():
+                    name = str(a.get("name", "")).split(".", 1)[-1].upper()
+                    listed.add(name)
+                    if a.get("enabled") and not a.get("is_suspended"):
+                        catalog[kind].add(name)
+                    commission = (a.get("option") or {}).get("profit", {}).get("commission")
+                    if kind == "turbo" and commission is not None:
+                        payouts[name] = (100 - float(commission)) / 100
+            self.catalog, self._payouts, self._listed = catalog, payouts, listed
+            self._open = catalog["turbo"]
         except Exception as e:
-            logger.warning(f"Open-asset catalog unavailable ({e}) — will try placements anyway")
+            logger.warning(f"IQ asset catalog unavailable ({e!r}) — will try placements anyway")
             self._open = None
-        try:
-            profits = self._call(self.iq.get_all_profit, 30)
-            self._payouts = {
-                name.upper(): float(kinds["turbo"]) for name, kinds in profits.items() if "turbo" in kinds
-            }
-        except Exception as e:
-            logger.warning(f"Payout catalog unavailable ({e})")
 
     # ── Orders ────────────────────────────────────────────────────────────
 
