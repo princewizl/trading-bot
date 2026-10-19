@@ -21,6 +21,7 @@ Env: DERIV_API_TOKEN, DERIV_TRADE_APP_ID, DERIV_ACCOUNT_ID
 import itertools
 import json
 import logging
+import re
 import time
 
 import requests
@@ -176,11 +177,17 @@ class DerivBroker:
             min_payout: float = 0.0) -> tuple[dict | None, str]:
         """Quote, check payout, buy. Returns ({order_id, expiry, payout}, "") or (None, reason)."""
         contract = "CALL" if direction == "BUY" else "PUT"
+        quote = {"proposal": 1, "contract_type": contract, "currency": self.currency,
+                 "duration": minutes, "duration_unit": "m", "underlying_symbol": ticker}
         try:
-            q = self._ask({
-                "proposal": 1, "amount": round(amount, 2), "basis": "stake", "contract_type": contract,
-                "currency": self.currency, "duration": minutes, "duration_unit": "m", "underlying_symbol": ticker,
-            })
+            q = self._ask({**quote, "amount": round(amount, 2), "basis": "stake"})
+            cap = _max_payout(q)
+            if cap is not None:
+                # Deriv caps the payout per contract (e.g. $100 on demo intraday forex), so a
+                # 2%-of-balance stake can be refused outright. Re-quote at the cap and let
+                # Deriv size the stake; the payout check below still applies.
+                logger.info(f"{ticker}: stake {amount:.2f} exceeds Deriv's max payout {cap:.2f} — re-quoting at the cap")
+                q = self._ask({**quote, "amount": cap, "basis": "payout"})
         except Exception as e:
             return None, f"Deriv quote failed: {e}"
         if "error" in q:
@@ -247,3 +254,14 @@ class DerivBroker:
         except Exception:
             self.close()
             raise
+
+
+def _max_payout(resp: dict) -> float | None:
+    """The payout cap from a 'maximum payout of X' quote rejection, else None."""
+    err = resp.get("error") or {}
+    details = err.get("details") or {}
+    for key in ("max_payout", "maximum_payout"):
+        if isinstance(details, dict) and details.get(key):
+            return float(details[key])
+    m = re.search(r"maximum payout of ([\d,]+(?:\.\d+)?)", err.get("message") or "")
+    return float(m.group(1).replace(",", "")) if m else None
