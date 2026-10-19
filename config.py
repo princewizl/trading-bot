@@ -198,6 +198,17 @@ MIN_PAYOUT  = float(os.getenv("MIN_PAYOUT", "0.75"))
 # Give up waiting for a result this long after expiry and record UNKNOWN.
 RESULT_GIVE_UP_SECONDS = 600
 
+# Which broker places the trades.
+#   deriv — real-market forex Rise/Fall on the same feed the strategy reads; min 15-minute expiry.
+#   iq    — IQ Option turbo. IQ only offers these pairs as OTC (synthetic prices), so with
+#           ALLOW_OTC=false nothing can be placed; kept for reference.
+BROKER = os.getenv("BROKER", "deriv").lower()
+BROKER_EXPIRY_MINUTES = {"deriv": 15, "iq": EXPIRY_MINUTES}[BROKER]
+
+DERIV_API_TOKEN    = os.getenv("DERIV_API_TOKEN", "")
+DERIV_TRADE_APP_ID = os.getenv("DERIV_TRADE_APP_ID", "")
+DERIV_ACCOUNT_ID   = os.getenv("DERIV_ACCOUNT_ID", "")
+
 # ─── Logging ────────────────────────────────────────────────────────────────
 LOG_FILE        = "logs/bot.log"
 TRADE_LOG_FILE  = "logs/trades.csv"

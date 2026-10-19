@@ -135,22 +135,27 @@ def shadow_vs_real(rows):
     """Check the shadow outcome method against real IQ results for traded rows."""
     try:
         with db.connect() as c:
-            trades = [dict(t) for t in c.execute("SELECT * FROM trades WHERE status IN ('WIN','LOSS')")]
+            trades = [dict(t) for t in c.execute(
+                "SELECT * FROM trades WHERE status IN ('WIN','LOSS') AND broker = ?", (config.BROKER,))]
     except sqlite3.Error:
         return
     agree = total = 0
     for r in rows:
-        if not r["traded"] or r["res_5"] not in ("WIN", "LOSS"):
+        if not r["traded"]:
             continue
         ts = datetime.fromisoformat(r["ts"])
         for t in trades:
             if (t["pair"] == r["pair"] and t["direction"] == r["direction"]
                     and abs((datetime.fromisoformat(t["placed_at"]) - ts).total_seconds()) < 120):
-                total += 1
-                agree += (t["status"] == r["res_5"])
+                # Compare at the trade's own expiry (5m on IQ, 15m on Deriv).
+                mins = (datetime.fromisoformat(t["expires_at"]) - datetime.fromisoformat(t["placed_at"])).total_seconds() / 60
+                h = min(HORIZONS, key=lambda x: abs(x - mins))
+                if r[f"res_{h}"] in ("WIN", "LOSS"):
+                    total += 1
+                    agree += (t["status"] == r[f"res_{h}"])
                 break
     if total:
-        print(f"\nShadow 5m outcome vs real IQ result on {total} traded setups: {agree / total:.0%} agree")
+        print(f"\nShadow outcome vs real broker result on {total} traded setups: {agree / total:.0%} agree")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────
@@ -159,7 +164,8 @@ def main(argv: list[str] | None = None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=0)
     ap.add_argument("--payout", type=float, default=0.0)
-    ap.add_argument("--horizon", type=int, default=5, choices=HORIZONS, help="expiry for breakdowns")
+    ap.add_argument("--horizon", type=int, default=config.BROKER_EXPIRY_MINUTES, choices=HORIZONS,
+                    help="expiry for breakdowns (default: the broker's trade expiry)")
     args = ap.parse_args(argv)
 
     rows = db.shadow_all()
@@ -173,7 +179,8 @@ def main(argv: list[str] | None = None):
     payout = args.payout
     if not payout:
         with db.connect() as c:
-            p = [r[0] for r in c.execute("SELECT payout FROM trades WHERE payout IS NOT NULL")]
+            p = [r[0] for r in c.execute(
+                "SELECT payout FROM trades WHERE payout IS NOT NULL AND broker = ?", (config.BROKER,))]
         payout = statistics.median(p) if p else 0.84
     be = 1 / (1 + payout)
     days = max(1, len({r["ts"][:10] for r in rows}))

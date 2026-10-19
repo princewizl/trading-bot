@@ -1,19 +1,20 @@
 """
 Long-running trading bot service — replaces the 5-minute GitHub Actions run.
 
-Loop (single thread; every IQ Option call has its own timeout):
+Loop (single thread; every broker call has its own timeout):
   * SCAN_LEAD_SECONDS before each M5 close: fetch all pairs (one pipelined request), run the
     strategy + session / news / direction / correlation filters, record every
     6/10+ setup in the shadow log, and place all surviving trades at once.
     Turbo expiry snaps to the whole minute nearest now+5m, so each order spans
     exactly the next M5 candle.
-  * Every LOOP_SECONDS: settle expired trades by order id (see execution/iq_broker.py).
+  * Every LOOP_SECONDS: settle expired trades by order id (execution/deriv_broker.py or
+    execution/iq_broker.py, chosen by config.BROKER).
     No 60s stagger, no balance diffing — any number of trades can be open.
   * Every minute: resolve matured shadow-log outcomes, publish status for the
     web app (heartbeat, IQ connection, balance, last scan).
 
 State lives in SQLite (data/db.py), so a restart never loses an open trade: it
-is reconciled from IQ Option's closed-options history on the next loop. The
+is reconciled by order id from the broker on the next loop. The
 PWA (web_app.py) reads the same database. Notifications go out as web push
 (notifications/notify.py); email is optional.
 
@@ -57,7 +58,7 @@ MAX_SCAN_LATE_SECS   = 20    # beyond this an order would miss the candle-aligne
 HISTORY_AFTER_SECS   = 20    # query closed-options history once a trade is this late
 HISTORY_EVERY_SECS   = 15
 BREAKER_WINDOW_HOURS = 4
-IQ_DOWN_ALERT_SECS   = 300   # push an alert when IQ Option has been unreachable this long
+IQ_DOWN_ALERT_SECS   = 300   # push an alert when the broker has been unreachable this long
 HEARTBEAT_FILE       = Path(db.DB_PATH).parent / "heartbeat"
 
 _stop = False
@@ -90,6 +91,7 @@ def main() -> None:
     last_history    = 0.0
     last_weekly     = ""
     last_assets_log = 0.0
+    status_start_set = False
     iq_down_since   = None
     iq_down_alerted = False
     db.set_status({"started_at": db.now_iso(), "mode": _mode(broker, dry_run)})
@@ -98,16 +100,16 @@ def main() -> None:
         if broker and not broker.ensure_connected():
             iq_down_since = iq_down_since or time.time()
             if not iq_down_alerted and broker.auth_rejected:
-                notify.alert("IQ Option rejected the login",
-                             "Fix IQ_EMAIL / IQ_PASSWORD in .env, then: docker compose up -d. Retrying every 30 min.", tag="iq")
+                notify.alert(f"{broker.name} rejected the login",
+                             "Fix the broker credentials in .env, then: docker compose up -d. Retrying every 30 min.", tag="iq")
                 iq_down_alerted = True
             elif not iq_down_alerted and time.time() - iq_down_since >= IQ_DOWN_ALERT_SECS:
-                notify.alert("IQ Option unreachable", "Reconnecting with backoff — no trades until it's back.", tag="iq")
+                notify.alert(f"{broker.name} unreachable", "Reconnecting with backoff — no trades until it's back.", tag="iq")
                 iq_down_alerted = True
             time.sleep(2)    # broker backs off internally; scans still run signal-only below
         elif broker and iq_down_since:
             if iq_down_alerted:
-                notify.alert("IQ Option reconnected", f"Down for {(time.time() - iq_down_since) / 60:.0f} min.", tag="iq")
+                notify.alert(f"{broker.name} reconnected", f"Down for {(time.time() - iq_down_since) / 60:.0f} min.", tag="iq")
             iq_down_since, iq_down_alerted = None, False
 
         now = time.time()    # after any reconnect, which can take up to 45s
@@ -132,7 +134,7 @@ def main() -> None:
                 logger.exception("Settlement pass crashed — will retry")
             if now - last_assets_log >= 1800:
                 last_assets_log = now
-                _log_iq_assets(broker)
+                _log_assets(broker)
 
         if now - last_minute_job >= 60:
             last_minute_job = now
@@ -143,11 +145,17 @@ def main() -> None:
                 "iq_connected": int(bool(broker and broker.connected())),
                 "balance":      f"{broker.balance:.2f}" if broker else None,
             })
+            if broker and broker.balance and not status_start_set:
+                # First balance seen on this broker's account = start of its equity curve.
+                key = f"start_balance_{config.BROKER}"
+                if not db.get_status().get(key):
+                    db.set_status({key: f"{broker.balance:.2f}"})
+                status_start_set = True
             today = datetime.now(timezone.utc).date().isoformat()
             if not dry_run and should_send_weekly() and last_weekly != today:
                 last_weekly = today
                 try:
-                    notify.weekly(db.journal_rows())
+                    notify.weekly(db.journal_rows(config.BROKER))
                 except Exception:
                     logger.exception("Weekly report failed")
 
@@ -239,14 +247,14 @@ def scan(strategy: TrendFollowingStrategy, broker, dry_run: bool) -> None:
 
     for sig, shadow_id, session_info in kept:
         name = config.PAIR_DISPLAY.get(sig.symbol, sig.symbol)
-        base = config.IQ_SYMBOLS.get(sig.symbol)
+        base = broker.symbol_for(sig.symbol) if broker else None
         placed, reason = None, ""
         amount = _stake(broker.balance if can_trade else None)
 
         if not can_trade:
-            reason = "dry run" if dry_run else ("IQ Option not connected" if broker else "signal-only mode")
+            reason = "dry run" if dry_run else (f"{broker.name} not connected" if broker else "signal-only mode")
         elif not base:
-            reason = f"{name} is not an auto-trade pair"
+            reason = f"{name} is not tradeable on {broker.name}"
         elif sig.symbol in busy:
             reason = f"traded < {config.SIGNAL_COOLDOWN_MINUTES} min ago or still open"
             logger.info(f"COOLDOWN {name}: {reason} — notification only")
@@ -268,18 +276,15 @@ def _place(broker, sig: Signal, base: str, amount: float, session_info: str) -> 
     if not ticker:
         logger.info(f"NOT PLACED {name}: {why}")
         return None, why
-    payout = broker.payout(ticker)
-    if payout is not None and payout < config.MIN_PAYOUT:
-        why = f"payout {payout:.0%} < minimum {config.MIN_PAYOUT:.0%}"
+    res, why = broker.buy(ticker, sig.direction, amount, config.BROKER_EXPIRY_MINUTES, config.MIN_PAYOUT)
+    if not res:
         logger.info(f"NOT PLACED {name}: {why}")
         return None, why
-
-    res = broker.buy(ticker, sig.direction, amount, config.EXPIRY_MINUTES)
-    if not res:
-        return None, "IQ Option rejected the order"
-    order_id, expiry = res
+    order_id, expiry, payout, amount = res["order_id"], res["expiry"], res["payout"], res["stake"]
     db.insert_open_trade({
         "order_id":      order_id,
+        "broker":        config.BROKER,
+        "account":       getattr(broker, "account_id", None) or ("demo" if config.IQ_DEMO else "real"),
         "placed_at":     db.now_iso(),
         "expires_at":    datetime.fromtimestamp(expiry, timezone.utc).isoformat(),
         "pair":          sig.symbol,
@@ -381,7 +386,7 @@ def _settle_until_done(broker, max_wait: int = 900) -> None:
 def circuit_breaker() -> str:
     """Reason string if the last N settled trades are all losses within the window, else ''."""
     n = config.MAX_CONSECUTIVE_LOSSES
-    tail = db.recent_settled(n)
+    tail = db.recent_settled(n, broker=config.BROKER)
     if len(tail) < n or any(t["status"] != "LOSS" for t in tail):
         return ""
     oldest = min(datetime.fromisoformat(t["settled_at"]) for t in tail)
@@ -429,18 +434,18 @@ def _signal_from_row(t: dict) -> Signal:
     )
 
 
-def _log_iq_assets(broker) -> None:
-    """Log what IQ Option offers right now for every scanned pair, auto-traded or not."""
+def _log_assets(broker) -> None:
+    """Log what the broker offers right now for every scanned pair, auto-traded or not."""
     try:
         avail = broker.availability([s.replace("=X", "") for s in config.TRADING_PAIRS])
     except Exception as e:
-        logger.warning(f"IQ asset check failed: {e}")
+        logger.warning(f"{broker.name} asset check failed: {e}")
         return
     for sym in config.TRADING_PAIRS:
         base = sym.replace("=X", "")
-        auto = "auto-trade" if sym in config.IQ_SYMBOLS else "signal-only"
-        logger.info(f"IQ asset {base:<7} [{auto}]: {avail.get(base, '?')}")
-    db.set_status({"iq_assets": "; ".join(f"{k}: {v}" for k, v in avail.items())})
+        auto = "auto-trade" if broker.symbol_for(sym) else "signal-only"
+        logger.info(f"{broker.name} asset {base:<7} [{auto}]: {avail.get(base, '?')}")
+    db.set_status({"broker_assets": "; ".join(f"{k}: {v}" for k, v in avail.items())})
 
 
 def _mode(broker, dry_run: bool) -> str:
@@ -448,15 +453,26 @@ def _mode(broker, dry_run: bool) -> str:
         return "DRY RUN"
     if not broker:
         return "SIGNAL-ONLY"
-    return f"AUTO-TRADE {'DEMO' if config.IQ_DEMO else 'LIVE'}"
+    demo = getattr(broker, "is_demo", True)
+    return f"AUTO-TRADE · {broker.name} {'DEMO' if demo else 'LIVE'}"
 
 
 def _make_broker(dry_run: bool):
-    if dry_run or not (config.IQ_EMAIL and config.IQ_PASSWORD):
+    if dry_run:
         return None
-    from execution.iq_broker import IQBroker
-    broker = IQBroker(config.IQ_EMAIL, config.IQ_PASSWORD, demo=config.IQ_DEMO, allow_otc=config.ALLOW_OTC)
+    if config.BROKER == "deriv":
+        if not (config.DERIV_API_TOKEN and config.DERIV_TRADE_APP_ID and config.DERIV_ACCOUNT_ID):
+            logger.warning("BROKER=deriv but DERIV_API_TOKEN / DERIV_TRADE_APP_ID / DERIV_ACCOUNT_ID missing")
+            return None
+        from execution.deriv_broker import DerivBroker
+        broker = DerivBroker(config.DERIV_API_TOKEN, config.DERIV_TRADE_APP_ID, config.DERIV_ACCOUNT_ID)
+    else:
+        if not (config.IQ_EMAIL and config.IQ_PASSWORD):
+            return None
+        from execution.iq_broker import IQBroker
+        broker = IQBroker(config.IQ_EMAIL, config.IQ_PASSWORD, demo=config.IQ_DEMO, allow_otc=config.ALLOW_OTC)
     broker.ensure_connected()
+    db.set_status({"broker": broker.name, "broker_key": config.BROKER})
     return broker
 
 

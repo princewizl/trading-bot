@@ -19,10 +19,13 @@ def _f(val, default: float = 0.0) -> float:
         return default
 
 
-def compute_stats(rows: list[dict]) -> dict:
+def compute_stats(rows: list[dict], start_balance: float | None = None) -> dict:
     completed = [r for r in rows if r.get("outcome") in ("WIN", "LOSS")]
     if not completed:
-        return _empty_stats()
+        empty = _empty_stats()
+        if start_balance:
+            empty.update(start_balance=start_balance, current_balance=start_balance)
+        return empty
 
     # Break-even from the payouts actually received: WR_be = 1 / (1 + payout)
     payouts = [_f(r.get("profit")) / _f(r.get("stake")) for r in completed
@@ -43,7 +46,7 @@ def compute_stats(rows: list[dict]) -> dict:
     current_bal  = eq_bal[-1] if eq_bal else 0.0
     peak_bal     = max(eq_bal) if eq_bal else 0.0
     low_bal      = min(eq_bal) if eq_bal else 0.0
-    start_bal    = START_BALANCE if START_BALANCE > 0 else (eq_bal[0] if eq_bal else 0.0)
+    start_bal    = start_balance or (START_BALANCE if START_BALANCE > 0 else (eq_bal[0] if eq_bal else 0.0))
     net_pnl      = round(current_bal - start_bal, 2) if start_bal else None
     draw_now_pct = round((peak_bal - current_bal) / peak_bal * 100, 1) if peak_bal else 0.0
     draw_max_pct = round((peak_bal - low_bal)     / peak_bal * 100, 1) if peak_bal else 0.0

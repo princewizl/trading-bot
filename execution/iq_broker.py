@@ -41,6 +41,12 @@ class CallTimeout(Exception):
 
 
 class IQBroker:
+    name = "IQ Option"
+
+    @property
+    def is_demo(self) -> bool:
+        return self.demo
+
     def __init__(self, email: str, password: str, demo: bool = True, allow_otc: bool = False):
         self.email     = email
         self.password  = password
@@ -191,24 +197,29 @@ class IQBroker:
 
     # ── Orders ────────────────────────────────────────────────────────────
 
-    def buy(self, ticker: str, direction: str, amount: float, minutes: int) -> tuple[str, int] | None:
-        """Place a turbo option. Returns (order_id, expiry_epoch) or None."""
+    def symbol_for(self, yf_symbol: str) -> str | None:
+        import config
+        return config.IQ_SYMBOLS.get(yf_symbol)
+
+    def buy(self, ticker: str, direction: str, amount: float, minutes: int,
+            min_payout: float = 0.0) -> tuple[dict | None, str]:
+        """Place a turbo option. Returns ({order_id, expiry, payout, stake}, "") or (None, reason)."""
         from iqoptionapi.expiration import get_expiration_time
+        payout = self.payout(ticker)
+        if payout is not None and payout < min_payout:
+            return None, f"payout {payout:.0%} < minimum {min_payout:.0%}"
         action = "call" if direction == "BUY" else "put"
         try:
             # Same expiry the library will request — computed first so we know it exactly.
             expiry, _ = get_expiration_time(int(self.iq.api.timesync.server_timestamp), minutes)
             ok, order_id = self._call(lambda: self.iq.buy(amount, ticker, action, minutes))
         except KeyError:
-            logger.warning(f"IQ Option has no asset code for {ticker}")
-            return None
+            return None, f"IQ Option has no asset code for {ticker}"
         except Exception as e:
-            logger.warning(f"IQ buy error ({ticker}): {e}")
-            return None
+            return None, f"IQ buy error: {e}"
         if not ok or order_id is None:
-            logger.warning(f"IQ buy rejected: {ticker} {action} — {order_id}")
-            return None
-        return str(order_id), int(expiry)
+            return None, f"IQ Option rejected the order ({order_id})"
+        return {"order_id": str(order_id), "expiry": int(expiry), "payout": payout, "stake": amount}, ""
 
     def pushed_result(self, order_id: str, stake: float, ticker: str) -> tuple[str, float | None, str] | None:
         """Non-blocking read of results IQ Option pushed over the websocket."""

@@ -63,13 +63,13 @@ def main():
         with db.connect() as c:
             cur = c.execute(
                 """INSERT OR IGNORE INTO trades
-                   (order_id, placed_at, expires_at, pair, ticker, direction, session, confidence,
+                   (order_id, broker, placed_at, expires_at, pair, ticker, direction, session, confidence,
                     strength, num_passed, checks_passed, checks_failed, price, adx, rsi, macd_hist,
                     bb_width, htf_trend, pattern, stake, payout, currency, status, profit,
                     balance_after, result_source, settled_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    cid or f"legacy-{i}", row["timestamp"], row["timestamp"], row["pair"],
+                    cid or f"legacy-{i}", "iq", row["timestamp"], row["timestamp"], row["pair"],
                     row["pair"].replace("=X", ""), row.get("direction", ""), row.get("session", ""),
                     row.get("confidence", ""), strength / 100 if strength is not None else None,
                     int(row["num_passed"]) if (row.get("num_passed") or "").isdigit() else None,

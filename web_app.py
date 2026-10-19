@@ -41,6 +41,9 @@ PASSWORD   = os.getenv("DASHBOARD_PASSWORD", "")
 SECRET_KEY = os.getenv("WEB_SECRET_KEY", "")
 
 OFFLINE_AFTER_SECS = 300      # heartbeat older than this = bot offline
+
+# Each broker is its own account with its own balance: the dashboard shows one at a time.
+VIEWS = {"deriv": "Deriv", "iq": "IQ Option (OTC history)"}
 MAX_LOGIN_FAILS    = 8
 LOCKOUT_SECS       = 900
 
@@ -111,8 +114,10 @@ def logout():
 
 @app.route("/")
 def index():
-    return render_template("dashboard.html", stats=compute_stats(db.journal_rows()),
-                           bot=_bot_status(), open_trades=_open_trades(),
+    stats, view, current = _stats_for_request()
+    return render_template("dashboard.html", stats=stats, bot=_bot_status(), open_trades=_open_trades(),
+                           views=VIEWS, view=view, current_view=current,
+                           report_horizon=config.BROKER_EXPIRY_MINUTES,
                            fetched_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
                            vapid_public_key=push.VAPID_PUBLIC_KEY)
 
@@ -124,15 +129,34 @@ def refresh():
 
 @app.route("/api/data")
 def api_data():
-    return jsonify({"stats": compute_stats(db.journal_rows()), "bot": _bot_status(),
+    stats, _, _ = _stats_for_request()
+    return jsonify({"stats": stats, "bot": _bot_status(),
                     "open_trades": _open_trades(), "fetched_at": time.time()})
+
+
+def _stats_for_request() -> tuple[dict, str, str]:
+    """Stats for ?view=<broker> (default: the broker the bot trades on now)."""
+    st = db.get_status()
+    current = st.get("broker_key") or config.BROKER
+    view = request.args.get("view") or current
+    if view not in VIEWS:
+        view = current
+    start = st.get(f"start_balance_{view}")
+    stats = compute_stats(db.journal_rows(view), float(start) if start else None)
+    if view == current and st.get("balance"):
+        live = float(st["balance"])   # the account's real balance right now, not the last trade's
+        stats["current_balance"] = live
+        if stats.get("start_balance"):
+            stats["net_pnl"] = round(live - stats["start_balance"], 2)
+    stats["view_label"] = VIEWS[view]
+    return stats, view, current
 
 
 @app.route("/api/report")
 def api_report():
     import shadow_report
     days = request.args.get("days", type=int) or 0
-    horizon = request.args.get("horizon", type=int) or 5
+    horizon = request.args.get("horizon", type=int) or config.BROKER_EXPIRY_MINUTES
     if horizon not in shadow_report.HORIZONS:
         abort(400)
     buf = io.StringIO()
@@ -147,6 +171,7 @@ def _bot_status() -> dict:
     age = (datetime.now(timezone.utc) - datetime.fromisoformat(hb)).total_seconds() if hb else None
     return {
         "mode":          st.get("mode") or "—",
+        "broker":        st.get("broker") or "Broker",
         "online":        age is not None and age < OFFLINE_AFTER_SECS,
         "heartbeat_age": int(age) if age is not None else None,
         "iq_connected":  st.get("iq_connected") == "1",

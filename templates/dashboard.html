@@ -213,7 +213,10 @@
   <header>
     <div class="header-left">
       <h1>Trading Bot</h1>
-      <span class="mode-badge">DEMO</span>
+      <span class="mode-badge">{{ stats.view_label }}</span>
+      {% for key, label in views.items() %}
+      <a class="btn btn-xs {{ 'active' if key == view }}" href="/?view={{ key }}">{{ label }}{{ ' · live' if key == current_view }}</a>
+      {% endfor %}
     </div>
     <div class="header-right">
       <span class="last-updated">Updated: <strong id="fetched-at">{{ fetched_at }}</strong></span>
@@ -234,7 +237,7 @@
   <div class="card">
     <div class="status-row">
       <span class="pill {{ 'ok' if bot.online else 'bad' }}" id="s-online"><span class="dot"></span>{{ 'Bot online' if bot.online else 'Bot offline' }}</span>
-      <span class="pill {{ 'ok' if bot.iq_connected else 'bad' }}" id="s-iq"><span class="dot"></span>IQ Option {{ 'connected' if bot.iq_connected else 'disconnected' }}</span>
+      <span class="pill {{ 'ok' if bot.iq_connected else 'bad' }}" id="s-iq"><span class="dot"></span>{{ bot.broker }} {{ 'connected' if bot.iq_connected else 'disconnected' }}</span>
       <span class="muted">Mode <strong id="s-mode">{{ bot.mode }}</strong></span>
       <span class="muted">Last scan <strong id="s-last">{{ (bot.last_scan or '—')[11:19] }}</strong></span>
       <span class="muted">Next <strong id="s-next">{{ (bot.next_scan or '—')[11:19] }}</strong> UTC</span>
@@ -261,7 +264,7 @@
       <div class="tile-value" id="t-balance">
         ${{ "%.2f" | format(stats.current_balance) }}
       </div>
-      <div class="tile-sub">IQ Option DEMO</div>
+      <div class="tile-sub">{{ stats.view_label }}{{ ' · live' if view == current_view }}</div>
     </div>
 
     <div class="tile {% if stats.net_pnl is not none and stats.net_pnl >= 0 %}tile-green{% elif stats.net_pnl is not none %}tile-red{% endif %}">
@@ -327,7 +330,7 @@
   <!-- ── Equity curve ───────────────────────────────────────────────────────── -->
   <div class="card">
     <div class="card-header">
-      <h2>Equity Curve — Demo Balance (USD)</h2>
+      <h2>Equity Curve — {{ stats.view_label }} (USD)</h2>
       <div class="chart-controls">
         <button class="btn btn-xs active" id="range-all" onclick="setRange('all')">All time</button>
         <button class="btn btn-xs"        id="range-7d"  onclick="setRange('7d')">7 days</button>
@@ -519,7 +522,7 @@
       <h2>Paper Log — filter &amp; expiry test</h2>
       <div class="table-controls">
         <select id="rep-days"><option value="0">All data</option><option value="7">7 days</option><option value="14">14 days</option><option value="30">30 days</option></select>
-        <select id="rep-horizon"><option value="5">5 min</option><option value="15">15 min</option><option value="30">30 min</option></select>
+        <select id="rep-horizon">{% for h in (5, 15, 30) %}<option value="{{ h }}" {{ 'selected' if h == report_horizon }}>{{ h }} min</option>{% endfor %}</select>
         <button class="btn btn-xs" onclick="loadReport()">Run report</button>
       </div>
     </div>
@@ -885,7 +888,7 @@ function startCountdown() {
       clearInterval(refreshIntervalId);
       el.textContent = 'refreshing…';
       try {
-        const resp = await fetch('/api/data');
+        const resp = await fetch('/api/data' + location.search);
         if (resp.status === 401) { location.href = '/login'; return; }
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const json = await resp.json();
@@ -939,7 +942,7 @@ function setPill(id, ok, text) {
 function applyBot(b, open) {
   if (!b) return;
   setPill('s-online', b.online, b.online ? 'Bot online' : 'Bot offline');
-  setPill('s-iq', b.iq_connected, 'IQ Option ' + (b.iq_connected ? 'connected' : 'disconnected'));
+  setPill('s-iq', b.iq_connected, b.broker + ' ' + (b.iq_connected ? 'connected' : 'disconnected'));
   const t = v => (v || '—').slice(11, 19) || '—';
   document.getElementById('s-mode').textContent = b.mode;
   document.getElementById('s-last').textContent = t(b.last_scan);

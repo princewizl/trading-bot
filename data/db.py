@@ -26,6 +26,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS trades (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     order_id       TEXT UNIQUE NOT NULL,
+    broker         TEXT,                           -- deriv | iq   (each has its own account + balance)
+    account        TEXT,
     placed_at      TEXT NOT NULL,
     expires_at     TEXT NOT NULL,
     pair           TEXT NOT NULL,
@@ -123,6 +125,12 @@ def init() -> None:
     with connect() as c:
         c.executescript(SCHEMA)
         c.execute("PRAGMA journal_mode=WAL")
+        # Migration: trades predating the broker column were all IQ Option.
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(trades)")}
+        for col in ("broker", "account"):
+            if col not in cols:
+                c.execute(f"ALTER TABLE trades ADD COLUMN {col} TEXT")
+        c.execute("UPDATE trades SET broker='iq' WHERE broker IS NULL")
 
 
 def now_iso() -> str:
@@ -159,10 +167,11 @@ def pairs_traded_since(minutes: int) -> set[str]:
         return {r["pair"] for r in c.execute("SELECT pair FROM trades WHERE placed_at > ?", (cutoff,))}
 
 
-def recent_settled(limit: int) -> list[dict]:
+def recent_settled(limit: int, broker: str | None = None) -> list[dict]:
     with connect() as c:
         return [dict(r) for r in c.execute(
-            "SELECT * FROM trades WHERE status IN ('WIN','LOSS') ORDER BY settled_at DESC LIMIT ?", (limit,)
+            "SELECT * FROM trades WHERE status IN ('WIN','LOSS') AND (? IS NULL OR broker = ?) "
+            "ORDER BY settled_at DESC LIMIT ?", (broker, broker, limit)
         )]
 
 
@@ -241,12 +250,13 @@ def subscriptions() -> list[dict]:
 
 # ── Journal view (legacy CSV shape used by the dashboard stats + weekly report) ──
 
-def journal_rows() -> list[dict]:
-    """Settled trades, oldest first, with the field names of the old Gist trade_log.csv."""
+def journal_rows(broker: str | None = None) -> list[dict]:
+    """Settled trades (optionally one broker's), oldest first, in the old Gist trade_log.csv shape."""
     from config import PAIR_DISPLAY
     with connect() as c:
         rows = c.execute(
-            "SELECT * FROM trades WHERE status != 'OPEN' ORDER BY COALESCE(settled_at, placed_at), id"
+            "SELECT * FROM trades WHERE status != 'OPEN' AND (? IS NULL OR broker = ?) "
+            "ORDER BY COALESCE(settled_at, placed_at), id", (broker, broker)
         ).fetchall()
     out = []
     for r in rows:
