@@ -55,6 +55,7 @@ class IQBroker:
         self._next_attempt = 0.0
         self._fail_streak = 0
         self.auth_rejected = False
+        self.catalog: dict[str, set[str]] = {}   # option type -> tickers open right now
 
     # ── Connection ────────────────────────────────────────────────────────
 
@@ -132,6 +133,21 @@ class IQBroker:
             return f"{base}-OTC", ""
         return None, f"{base} closed for turbo on IQ Option" + ("" if self.allow_otc else " (OTC disabled)")
 
+    def availability(self, bases: list[str]) -> dict[str, str]:
+        """Per base symbol, which IQ option types are open now, e.g. {'USDJPY': 'digital'}."""
+        self._refresh_catalog()
+        out = {}
+        for base in bases:
+            kinds = [k for k, syms in self.catalog.items() if base in syms]
+            otc = [k for k, syms in self.catalog.items() if f"{base}-OTC" in syms]
+            desc = ",".join(kinds) or "closed"
+            if otc:
+                desc += f" | OTC: {','.join(otc)}"
+            if base in self._payouts:
+                desc += f" | turbo payout {self._payouts[base]:.0%}"
+            out[base] = desc
+        return out
+
     def payout(self, ticker: str) -> float | None:
         self._refresh_catalog()
         return self._payouts.get(ticker)
@@ -145,6 +161,10 @@ class IQBroker:
             self._open = {
                 sym.upper() for cat in ("turbo",) for sym, info in data.get(cat, {}).items()
                 if isinstance(info, dict) and info.get("open")
+            }
+            self.catalog = {
+                cat: {sym.upper() for sym, info in data.get(cat, {}).items() if isinstance(info, dict) and info.get("open")}
+                for cat in ("turbo", "binary", "digital")
             }
         except Exception as e:
             logger.warning(f"Open-asset catalog unavailable ({e}) — will try placements anyway")

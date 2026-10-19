@@ -89,6 +89,7 @@ def main() -> None:
     last_minute_job = 0.0
     last_history    = 0.0
     last_weekly     = ""
+    last_assets_log = 0.0
     iq_down_since   = None
     iq_down_alerted = False
     db.set_status({"started_at": db.now_iso(), "mode": _mode(broker, dry_run)})
@@ -129,6 +130,9 @@ def main() -> None:
                 last_history = settle_open_trades(broker, last_history)
             except Exception:
                 logger.exception("Settlement pass crashed — will retry")
+            if now - last_assets_log >= 1800:
+                last_assets_log = now
+                _log_iq_assets(broker)
 
         if now - last_minute_job >= 60:
             last_minute_job = now
@@ -423,6 +427,20 @@ def _signal_from_row(t: dict) -> Signal:
         htf_trend=t["htf_trend"] or "", candlestick_pattern=t["pattern"] or "",
         macd_hist=t["macd_hist"] or 0.0, bb_width=t["bb_width"] or 0.0, volume_ok=False, advice="",
     )
+
+
+def _log_iq_assets(broker) -> None:
+    """Log what IQ Option offers right now for every scanned pair, auto-traded or not."""
+    try:
+        avail = broker.availability([s.replace("=X", "") for s in config.TRADING_PAIRS])
+    except Exception as e:
+        logger.warning(f"IQ asset check failed: {e}")
+        return
+    for sym in config.TRADING_PAIRS:
+        base = sym.replace("=X", "")
+        auto = "auto-trade" if sym in config.IQ_SYMBOLS else "signal-only"
+        logger.info(f"IQ asset {base:<7} [{auto}]: {avail.get(base, '?')}")
+    db.set_status({"iq_assets": "; ".join(f"{k}: {v}" for k, v in avail.items())})
 
 
 def _mode(broker, dry_run: bool) -> str:

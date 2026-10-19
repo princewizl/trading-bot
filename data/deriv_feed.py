@@ -93,40 +93,50 @@ def fetch_batch(items: list[tuple[str, str, str]], timeout: float = 20) -> dict[
     global _ws
     out: dict[tuple, pd.DataFrame] = {}
     with _lock:
-        if _ws is None:
-            _ws = _open()
+        # Deriv drops idle sockets between scans, so the first send after a pause
+        # often hits a dead connection: reconnect once and resend what's missing.
+        for attempt in range(2):
+            todo = [i for i in items if i not in out]
+            if not todo:
+                break
             if _ws is None:
-                return out
-        pending: dict[int, tuple] = {}
-        try:
-            for item in items:
-                symbol, interval, period = item
-                deriv_symbol, granularity = config.DERIV_SYMBOLS.get(symbol), _GRANULARITY.get(interval)
-                if not deriv_symbol or not granularity:
-                    continue
-                req_id = next(_req_id)
-                pending[req_id] = item
-                _ws.send(json.dumps({
-                    "ticks_history": deriv_symbol, "end": "latest",
-                    "count": _period_to_count(period, interval),
-                    "style": "candles", "granularity": granularity, "req_id": req_id,
-                }))
-            deadline = time.time() + timeout
-            while pending and time.time() < deadline:
-                _ws.settimeout(max(0.1, deadline - time.time()))
-                resp = json.loads(_ws.recv())
-                item = pending.pop(resp.get("req_id"), None)
-                if item is None:
-                    continue
-                if "error" in resp:
-                    logger.error(f"Deriv feed error for {item[0]} [{item[1]}]: {resp['error']['message']}")
-                    continue
-                df = _to_dataframe(resp.get("candles", []))
-                if df is not None:
-                    out[item] = df
-        except Exception as e:
-            logger.warning(f"Deriv batch interrupted ({e}) — {len(pending)} item(s) will fall back")
-            _close()
+                _ws = _open()
+                if _ws is None:
+                    break
+            pending: dict[int, tuple] = {}
+            try:
+                for item in todo:
+                    symbol, interval, period = item
+                    deriv_symbol, granularity = config.DERIV_SYMBOLS.get(symbol), _GRANULARITY.get(interval)
+                    if not deriv_symbol or not granularity:
+                        continue
+                    req_id = next(_req_id)
+                    pending[req_id] = item
+                    _ws.send(json.dumps({
+                        "ticks_history": deriv_symbol, "end": "latest",
+                        "count": _period_to_count(period, interval),
+                        "style": "candles", "granularity": granularity, "req_id": req_id,
+                    }))
+                deadline = time.time() + timeout
+                while pending and time.time() < deadline:
+                    _ws.settimeout(max(0.1, deadline - time.time()))
+                    resp = json.loads(_ws.recv())
+                    item = pending.pop(resp.get("req_id"), None)
+                    if item is None:
+                        continue
+                    if "error" in resp:
+                        logger.error(f"Deriv feed error for {item[0]} [{item[1]}]: {resp['error']['message']}")
+                        continue
+                    df = _to_dataframe(resp.get("candles", []))
+                    if df is not None:
+                        out[item] = df
+                break
+            except Exception as e:
+                logger.debug(f"Deriv batch attempt {attempt + 1} interrupted ({e}) — reconnecting")
+                _close()
+        missing = len(items) - len(out)
+        if missing:
+            logger.warning(f"Deriv batch: {missing} item(s) missing — falling back per item")
     return out
 
 
