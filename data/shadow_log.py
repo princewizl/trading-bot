@@ -28,8 +28,12 @@ MAX_RESOLVE_H  = 20             # give up on rows the 1-day M1 history can no lo
 
 
 def record(symbol: str, df_m5: pd.DataFrame, feats: dict | None,
-           session: str, blackout: str, news_blocked: bool) -> int | None:
-    """Store this scan's setup for `symbol` if worth logging. Returns the row id."""
+           session: str, blackout: str, news_blocked: bool, force: bool = False) -> int | None:
+    """
+    Store this scan's setup for `symbol` if worth logging. Returns the row id.
+    force=True skips the cooldown de-duplication — used when the setup fired a live
+    signal, so every signal / trade has its own row with its own entry time.
+    """
     if feats is None or feats["num_passed"] < MIN_PASSED:
         return None
     now = datetime.now(timezone.utc)
@@ -37,7 +41,7 @@ def record(symbol: str, df_m5: pd.DataFrame, feats: dict | None,
         return None   # weekend / holiday — stale prices would resolve as ties
     # Mirror the live per-pair cooldown so consecutive scans of one setup count once.
     since = (now - timedelta(minutes=config.SIGNAL_COOLDOWN_MINUTES)).isoformat()
-    if db.shadow_logged_since(symbol, feats["direction"], since):
+    if not force and db.shadow_logged_since(symbol, feats["direction"], since):
         return None
     return db.insert_shadow({
         "ts":           now.replace(microsecond=0).isoformat(),

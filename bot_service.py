@@ -199,10 +199,11 @@ def scan(strategy: TrendFollowingStrategy, broker, dry_run: bool) -> None:
 
         session_ok, session_info = is_session_active(symbol)
         blocked, news_reason = is_news_blocked(symbol)
-        shadow_id = shadow_log.record(
-            symbol, df_m5, strategy.features(df_m5, htf_df=df_h1),
+        shadow_args = dict(
+            symbol=symbol, df_m5=df_m5, feats=strategy.features(df_m5, htf_df=df_h1),
             session=pair_session_now(symbol), blackout=blackout_now(), news_blocked=blocked,
         )
+        shadow_id = shadow_log.record(**shadow_args)
 
         if not session_ok:
             logger.info(f"SKIP {name}: {session_info} — {minutes_to_next_session(symbol)} min to next session")
@@ -224,6 +225,10 @@ def scan(strategy: TrendFollowingStrategy, broker, dry_run: bool) -> None:
             continue
 
         sig.upcoming_news = next_news_events(symbol, look_ahead_hours=2)
+        if shadow_id is None:
+            # De-duplicated against a setup logged < 15 min ago; a live signal still gets its
+            # own row so it can be matched to its trade and outcome.
+            shadow_id = shadow_log.record(**shadow_args, force=True)
         candidates.append((sig, shadow_id, session_info))
         logger.info(
             f"SIGNAL {name} {sig.direction} {sig.confidence_label} {sig.strength:.0%} | "

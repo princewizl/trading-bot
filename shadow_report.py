@@ -26,6 +26,12 @@ from data import db
 
 HORIZONS = (5, 15, 30)
 
+# Fade test (trade the OPPOSITE of the signal), pre-registered on 2026-10-21 13:22 UTC.
+# The 3 days before this cutoff are what suggested fading (setups won ~41% at 15m), so they
+# cannot also be the evidence for it: only setups logged after the cutoff count.
+FADE_FRESH_SINCE = "2026-10-21T13:22:00+00:00"
+FADE_MIN_N = 200   # resolved setups needed before the verdict means anything
+
 # Index of each check in Signal check order (strategy/trend_following.py).
 C_HTF, C_EMA50, C_CROSS, C_ALIGN, C_ADX, C_DI, C_RSI, C_PATTERN, C_MACD, C_BB = range(10)
 
@@ -99,9 +105,10 @@ def wilson(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
     return centre - half, centre + half
 
 
-def summarise(rows, h, payout, days):
+def summarise(rows, h, payout, days, fade=False):
+    """Win rate of the signal direction — or of the opposite direction when fade=True."""
     res = [r[f"res_{h}"] for r in rows if r[f"res_{h}"] in ("WIN", "LOSS")]
-    n, w = len(res), res.count("WIN")
+    n, w = len(res), res.count("LOSS" if fade else "WIN")
     if n == 0:
         return None
     p = w / n
@@ -129,6 +136,32 @@ def breakdown(rows, key, h, payout, days, be, title, min_n=10):
     small = sum(1 for k in groups if (summarise(groups[k], h, payout, days) or {"n": 0})["n"] < min_n)
     if small:
         print(f"    ({small} group(s) with < {min_n} resolved rows hidden)")
+
+
+def fade_section(rows, payout, be):
+    fresh = [r for r in rows if r["ts"] >= FADE_FRESH_SINCE]
+    days = max(1, len({r["ts"][:10] for r in fresh}))
+    print(f"\n═══ FADE test — opposite direction, fresh data only (since {FADE_FRESH_SINCE[:16].replace('T', ' ')} UTC) ═══")
+    print("  Pre-registered: data before the cutoff suggested this, so it doesn't count as evidence.")
+    if not fresh:
+        print("  No fresh setups yet.")
+        return
+    for h in HORIZONS:
+        print(f"  {h}-minute expiry:")
+        for label, ov in (("live rules", {}), ("score >= 7", {"min_passed": 7}), ("score >= 6", {"min_passed": 6})):
+            st = summarise([r for r in fresh if live_rules(**ov)(r)], h, payout, days, fade=True)
+            print(f"    FADE {label:<12} {fmt(st, be)}")
+    broad = summarise([r for r in fresh if live_rules(min_passed=6)(r)], 15, payout, days, fade=True)
+    n = broad["n"] if broad else 0
+    if n < FADE_MIN_N:
+        verdict = f"not enough fresh data yet ({n}/{FADE_MIN_N} resolved at 15m, score >= 6)"
+    elif broad["lo"] > be:
+        verdict = "PASS — fading beats break-even with its whole CI; consider a demo trial"
+    elif broad["hi"] < be:
+        verdict = "FAIL — fading is below break-even too"
+    else:
+        verdict = "INCONCLUSIVE — CI straddles break-even; keep collecting"
+    print(f"  Verdict (15m, score >= 6): {verdict}")
 
 
 def shadow_vs_real(rows):
@@ -194,6 +227,8 @@ def main(argv: list[str] | None = None):
         for label, ov in SCENARIOS:
             sel = [r for r in rows if live_rules(**ov)(r)]
             print(f"  {label:<30} {fmt(summarise(sel, h, payout, days), be)}")
+
+    fade_section(rows, payout, be)
 
     h = args.horizon
     live = [r for r in rows if live_rules()(r)]
