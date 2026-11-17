@@ -108,6 +108,13 @@ PAIR_DIRECTION_RESTRICT: dict[str, str] = {
     "GBPJPY=X": "SELL",   # BUY blocked: 50% WR = coin flip; SELL: 71% WR
 }
 
+# Sessions the bot may TRADE in (setups in the others are still paper-logged).
+# London + New York only from 2026-11-17: over Oct 19 – Nov 16, live-rule setups won
+# 56.5% (London) / 55.3% (NY) vs 41.1% (Tokyo) / 45.0% (Sydney) at 15m, and the
+# Tokyo + Sydney trades lost $743 of the $634 net loss. Pre-registered test of this
+# change: shadow_report.py "SESSION test" (fresh data only).
+TRADE_SESSIONS = {s.strip().upper() for s in os.getenv("TRADE_SESSIONS", "LONDON,NEW_YORK").split(",") if s.strip()}
+
 # Minimum candles between two signals on the same pair
 SIGNAL_COOLDOWN_MINUTES = 15
 

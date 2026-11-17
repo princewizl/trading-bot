@@ -32,6 +32,13 @@ HORIZONS = (5, 15, 30)
 FADE_FRESH_SINCE = "2026-10-21T13:22:00+00:00"
 FADE_MIN_N = 200   # resolved setups needed before the verdict means anything
 
+# Session test, pre-registered on 2026-11-17: trade London + New York only
+# (config.TRADE_SESSIONS). Chosen from Oct 19 – Nov 16 data, so only setups after
+# this cutoff count. Live-rule setups run ~12/day, so 300 takes ~4-6 weeks.
+SESSION_FRESH_SINCE = "2026-11-17T08:10:00+00:00"
+SESSION_MIN_N = 300
+ALL_SESSIONS = {"LONDON", "NEW_YORK", "TOKYO", "SYDNEY"}
+
 # Index of each check in Signal check order (strategy/trend_following.py).
 C_HTF, C_EMA50, C_CROSS, C_ALIGN, C_ADX, C_DI, C_RSI, C_PATTERN, C_MACD, C_BB = range(10)
 
@@ -44,7 +51,7 @@ def live_rules(**overrides):
         min_passed=round(config.MIN_SIGNAL_STRENGTH * 10),
         adx_min=config.ADX_HARD_MIN, adx_max=config.ADX_HARD_MAX,
         htf_gate=True, rsi_gate=config.RSI_HARD_GATE,
-        session=True, blackout=True, news=True,
+        session=True, sessions=set(config.TRADE_SESSIONS), blackout=True, news=True,
         direction=dict(config.PAIR_DIRECTION_RESTRICT),
     )
     o.update(overrides)
@@ -62,7 +69,7 @@ def live_rules(**overrides):
         if o["rsi_gate"] and ((r["direction"] == "BUY" and r["rsi"] >= config.RSI_OVERBOUGHT)
                               or (r["direction"] == "SELL" and r["rsi"] <= config.RSI_OVERSOLD)):
             return False
-        if o["session"] and not r["session"]:
+        if o["session"] and r["session"] not in o["sessions"]:
             return False
         if o["blackout"] and r["blackout"]:
             return False
@@ -85,6 +92,7 @@ SCENARIOS = [
     ("+ ADX ceiling 50",                       {"adx_max": 50}),
     ("+ RSI hard gate",                        {"rsi_gate": True}),
     ("no H1 counter-trend gate",               {"htf_gate": False}),
+    ("all 4 sessions (+Tokyo/Sydney)",         {"sessions": ALL_SESSIONS}),
     ("no session filter",                      {"session": False}),
     ("no blackout windows",                    {"blackout": False}),
     ("no news filter",                         {"news": False}),
@@ -152,16 +160,39 @@ def fade_section(rows, payout, be):
             st = summarise([r for r in fresh if live_rules(**ov)(r)], h, payout, days, fade=True)
             print(f"    FADE {label:<12} {fmt(st, be)}")
     broad = summarise([r for r in fresh if live_rules(min_passed=6)(r)], 15, payout, days, fade=True)
-    n = broad["n"] if broad else 0
-    if n < FADE_MIN_N:
-        verdict = f"not enough fresh data yet ({n}/{FADE_MIN_N} resolved at 15m, score >= 6)"
-    elif broad["lo"] > be:
-        verdict = "PASS — fading beats break-even with its whole CI; consider a demo trial"
-    elif broad["hi"] < be:
-        verdict = "FAIL — fading is below break-even too"
-    else:
-        verdict = "INCONCLUSIVE — CI straddles break-even; keep collecting"
-    print(f"  Verdict (15m, score >= 6): {verdict}")
+    print(f"  Verdict (15m, score >= 6): {verdict(broad, be, FADE_MIN_N, 'fading')}")
+
+
+def verdict(st, be, min_n, what) -> str:
+    n = st["n"] if st else 0
+    if n < min_n:
+        return f"not enough fresh data yet ({n}/{min_n} resolved)"
+    if st["lo"] > be:
+        return f"PASS — {what} beats break-even with its whole CI"
+    if st["hi"] < be:
+        return f"FAIL — {what} is below break-even"
+    return "INCONCLUSIVE — CI straddles break-even; keep collecting"
+
+
+def session_section(rows, payout, be):
+    fresh = [r for r in rows if r["ts"] >= SESSION_FRESH_SINCE]
+    days = max(1, len({r["ts"][:10] for r in fresh}))
+    sess = "+".join(sorted(config.TRADE_SESSIONS))
+    print(f"\n═══ SESSION test — trade {sess} only, fresh data only (since {SESSION_FRESH_SINCE[:16].replace('T', ' ')} UTC) ═══")
+    print("  Pre-registered: the sessions were picked from earlier data, so only later setups count.")
+    if not fresh:
+        print("  No fresh setups yet.")
+        return
+    excluded = ALL_SESSIONS - set(config.TRADE_SESSIONS)
+    for h in HORIZONS:
+        print(f"  {h}-minute expiry:")
+        st = summarise([r for r in fresh if live_rules()(r)], h, payout, days)
+        print(f"    {'traded sessions':<26} {fmt(st, be)}")
+        st = summarise([r for r in fresh if live_rules(sessions=excluded)(r)], h, payout, days)
+        print(f"    {'excluded (paper only)':<26} {fmt(st, be)}")
+    main_st = summarise([r for r in fresh if live_rules()(r)], config.BROKER_EXPIRY_MINUTES, payout, days)
+    print(f"  Verdict ({config.BROKER_EXPIRY_MINUTES}m, live rules, {sess}): "
+          f"{verdict(main_st, be, SESSION_MIN_N, sess + ' trading')}")
 
 
 def shadow_vs_real(rows):
@@ -228,6 +259,7 @@ def main(argv: list[str] | None = None):
             sel = [r for r in rows if live_rules(**ov)(r)]
             print(f"  {label:<30} {fmt(summarise(sel, h, payout, days), be)}")
 
+    session_section(rows, payout, be)
     fade_section(rows, payout, be)
 
     h = args.horizon

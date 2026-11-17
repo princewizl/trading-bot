@@ -22,6 +22,8 @@ Overlap windows (highest liquidity / most reliable trends):
 
 from datetime import datetime, timezone, time as dtime
 
+import config
+
 # Each entry: (open_utc_hhmm, close_utc_hhmm)
 # Skip 15 min after open and 15 min before close of each raw session
 SESSIONS = {
@@ -71,11 +73,11 @@ def is_session_active(symbol: str) -> tuple[bool, str]:
         return False, f"blackout {blackout} UTC (high-volatility window)"
 
     session_name = pair_session_now(symbol)
-    if session_name:
+    if session_name in config.TRADE_SESSIONS:
         return True, session_name
 
     # Build readable reason
-    allowed = PAIR_SESSIONS.get(symbol, list(SESSIONS.keys()))
+    allowed = _trade_sessions(symbol)
     windows = [
         f"{SESSIONS[s][0].strftime('%H:%M')}–{SESSIONS[s][1].strftime('%H:%M')} UTC ({s})"
         for s in allowed if s in SESSIONS
@@ -93,13 +95,23 @@ def blackout_now() -> str:
 
 
 def pair_session_now(symbol: str) -> str:
-    """Return the pair's optimal session that is open now (ignoring blackouts), or ''."""
+    """
+    The pair's optimal session open now (ignoring blackouts), or ''. Prefers a session
+    the bot trades in (config.TRADE_SESSIONS) when two overlap, but still names
+    non-traded ones (e.g. TOKYO) so the shadow log can compare them.
+    """
     now_utc = datetime.now(timezone.utc).time().replace(second=0, microsecond=0)
-    for session_name in PAIR_SESSIONS.get(symbol, list(SESSIONS.keys())):
-        window = SESSIONS.get(session_name)
-        if window and _time_in_range(now_utc, window[0], window[1]):
-            return session_name
-    return ""
+    open_now = [
+        s for s in PAIR_SESSIONS.get(symbol, list(SESSIONS.keys()))
+        if s in SESSIONS and _time_in_range(now_utc, SESSIONS[s][0], SESSIONS[s][1])
+    ]
+    traded = [s for s in open_now if s in config.TRADE_SESSIONS]
+    return (traded or open_now or [""])[0]
+
+
+def _trade_sessions(symbol: str) -> list[str]:
+    """The pair's optimal sessions that the bot is allowed to trade in."""
+    return [s for s in PAIR_SESSIONS.get(symbol, list(SESSIONS.keys())) if s in config.TRADE_SESSIONS]
 
 
 def active_sessions_now() -> list[str]:
@@ -119,7 +131,7 @@ def minutes_to_next_session(symbol: str) -> int | None:
     from datetime import date, timedelta, datetime as dt
     now_utc = datetime.now(timezone.utc)
     now_t   = now_utc.time()
-    allowed = PAIR_SESSIONS.get(symbol, list(SESSIONS.keys()))
+    allowed = _trade_sessions(symbol)
     min_wait = None
 
     for session_name in allowed:
